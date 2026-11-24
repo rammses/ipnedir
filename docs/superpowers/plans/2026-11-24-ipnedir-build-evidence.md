@@ -14,7 +14,7 @@
 ## Required gates still pending
 
 - Task1 complete after fresh spec/quality approval; one documented nonblocking diagnostic deferred to Task6/final review.
-- Tasks1–5 complete locally; Task6 independently checked candidate below, fresh review pending. Task7 not started; actual Darwin/native evidence remains Task8.
+- Tasks1–6 complete; Task7 independently checked executable candidate below, fresh review pending. Actual Darwin/native evidence remains Task8.
 - Task8 actual macOS/ARM/native four-target evidence: unproved, not waived.
 - Task9 archive/formula/release preparation and separately authorized publication/Homebrew evidence: not started.
 - Whole-change independent review/final acceptance: pending.
@@ -108,3 +108,18 @@
 - Builder independently reran final fmt exit0, full workspace/all-target tests **136 passed**,0 failed/ignored, Clippy -D warnings exit0 **without warnings**, whitespace check; inspected actual sources and regression evidence. Feature graph previously independently observed unchanged approved Rustls-only policy; parser-only fix did not touch graph inputs.
 - Existing Minor IPN-T1-R1-001 is resolved in candidate through genuine production ureq use, no suppression/fakeuse/manifest/lock/feature change. Fresh review must verify resolution; final whole-change review still sees its history.
 - Task7 same-coordinator/process/offline/help/version/render gates and Task8 actual native/macARM/SDK gates remain pending. No live icanhazip/TLS/provider timing or executable claim. Initial fresh Task6 review/acceptance pending.
+
+### Task6 acceptance
+
+- Commit `70d43cece14201507fc65a419ab78695d2b291ee`, base `476a4bb06e1e7ccac748d24f883a709ecbd79dc6`; required package `review-476a4bb..70d43ce.diff` includes PRE1 correction and all new tests.
+- Fresh capable Reviewer `ses_df0950991ffe4FVI4xEz3SQJo7`: spec compliant, quality Approved first formal pass; no new findings, PRE1 ASCII-only parsing verified. Historical Minor IPN-T1-R1-001 resolved through actual production ureq use, not suppressed/faked.
+- Reviewed worker ownership/cutoff/security/API behavior and meaningful tests; no new endpoint or timing proof claimed. Builder retains Task7 coordinator/early-return/process and Task8 actual native SDK/macARM cannot-verify items as required future gates. Task6 complete; Tasks7–9 pending.
+
+## Task7 — candidate executable/report and production-coordinator proof
+
+- Fresh capable worker `ses_df08fa145ffeaLCojQETAN7KeA`, BASE `70d43cece14201507fc65a419ab78695d2b291ee`; only app/render/main, test-only process/helpers, lib/platform composition and README. Accepted collectors/models/public logic/dependencies untouched.
+- Implements lazy CLI/collector/public factories, exactly one1s sleep with actual snapshot rates, cutoff before optional route queries, all-interface readable/color-safe report, separate driver speed/public egress, escaped controls/raw names, fallible write+flush with quiet BrokenPipe0 and explicit other exit/error paths.
+- Worker app/render/process behavioral RED then GREEN. Complete suite **171 tests** =146 library+0main+5CLI-process+20 lifecycle. Seven re-executed children use real coordinator/SystemClock/PublicWorkers with permanently blocked external-operation callbacks; normal state drops/harness return, no process::exit bypass or release signal, actual write/flush closed-pipe cases,3s watchdog with no timeouts/kills. Test controls exist only in test binary, not release app.
+- Builder independently ran final fmt0, complete workspace/all-target171tests (0 failed/ignored), Clippy -D warnings0 warning-free, named binary build0, explicit binary --version/--help/--offline all0. Inspected app/render/main and composition/README diff plus full worker evidence. Actual offline output showed all9 interfaces/13 addresses, states/scopes/MTUs, separateRX/TX/driver speed and disabled public results. No bare/default online run or endpoint request.
+- Worker offline comparator additionally matched read-only native inventory/default observations; reported no unneeded private data dump. Exact RED/GREEN/process elapsed observations and source hashes in ignored `task-7-report.md`; those callback tests are ownership/process proofs, not live DNS/TLS/provider timing claims.
+- README distinguishes Linux host verification from intended macOS15/glibc2.35/four-target matrix and future Homebrew publication; migration guidance is manual only, user alias/prototype unchanged. Native/macARM/SDK/trace/four-runner gates still Task8, release/tap/Homebrew still separate Task9 authority. Fresh local task review and acceptance pending.
