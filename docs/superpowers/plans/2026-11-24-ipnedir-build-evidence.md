@@ -141,3 +141,10 @@
 - Actual host Ubuntu24.04/glibc2.39 Linuxx64 is **not** approved Ubuntu22.04/glibc2.35. All four required rows remain **UNRUN**: ubuntu22.04 x64, ubuntu22.04-arm, macos15 ARM, macos15-intel. Native Darwin SDK/build/runtime, all five Task4/5 native tests plus new SDK/IFMIB corroboration and Linux pinned-baseline/socket traces remain pending.
 - Verified capability gap: gh/brew/xcrun unavailable, strace available, no supplied owner-authorized remote/native runner access/results. Missing gh is not proof the remote repository does not exist. No install/auth/credential inspection/remote create/push/dispatch was attempted to unblock this.
 - Task8 is **incomplete/BLOCKED**, Task9 and whole-change/final acceptance are not started. A local code checkpoint/review can inspect preparation without accepting the missing native gate. Need owner-authorized exact four-native execution/log artifacts or supplied native environments; publication/tap/alias changes remain separate authority.
+
+### Task8 preparation review — not acceptance
+
+- Local checkpoint `99e1d004e5995757b216630b49e5ae7a27d34221`, base `7c973b895ab43996f442e3108a3a204747e92ae1`; required package `review-7c973b8..99e1d00.diff`.
+- Fresh capable Reviewer `ses_df054bd4bffe6DIHP8g27RH11T`: no actionable source/preparation findings, quality Approved; **Task8 itself incomplete and acceptance BLOCKED**, all four native rows UNRUN. Reviewer inspected full diff, selected source/API/layout risks and truthful evidence boundaries, not native execution.
+- No source changed after that review; later entries only record review/blocker state. Existing Task7 Minor IPN-T7-R1-001 remains for final whole-change triage. Do not treat this review as permission to skip native evidence or begin Task9.
+- Await exact owner authorization/access for native jobs or supplied logs/artifacts on the reviewed revision. No GitHub CLI install/auth, repository creation/visibility change, remote push or CI dispatch has occurred; no release/tag/tap/install/alias changes.
