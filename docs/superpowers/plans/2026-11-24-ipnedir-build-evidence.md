@@ -14,7 +14,7 @@
 ## Required gates still pending
 
 - Task1 complete after fresh spec/quality approval; one documented nonblocking diagnostic deferred to Task6/final review.
-- Tasks1–4 complete locally; Task5 independently checked local candidate below, fresh review pending. Tasks6–7 not started. Actual Darwin/native evidence remains Task8.
+- Tasks1–5 complete locally; Task6 independently checked candidate below, fresh review pending. Task7 not started; actual Darwin/native evidence remains Task8.
 - Task8 actual macOS/ARM/native four-target evidence: unproved, not waived.
 - Task9 archive/formula/release preparation and separately authorized publication/Homebrew evidence: not started.
 - Whole-change independent review/final acceptance: pending.
@@ -92,3 +92,19 @@
 - Worker initial behavioral RED25 failures, later required-gateway semantic regression RED then fix; GREEN31 route tests,111 complete host tests. Exact source citations, RED/GREEN excerpts and sole new unsafe sysctl audit in `.superpowers/sdd/2026-11-24-ipnedir-implementation/task-5-report.md`.
 - Builder independently fmt exit0, full workspace/all-target tests **111 passed**,0 failed/ignored, Clippy -D warnings exit0 (only existing unused-ureq Cargo diagnostic), whitespace check; inspected actual route controller/parser and shared helper/registration diff.
 - Added two native-only route/layout smoke tests; actual selected-SDK/native compile/runtime/macARM checks not run here, remain Task8. Fresh local task review and acceptance pending; no platform/global readiness claim.
+
+### Task5 local acceptance
+
+- Commit `476a4bb06e1e7ccac748d24f883a709ecbd79dc6`, base `08cdee35347a59d7ac037954469dc52a641fc0a7`; required package `review-08cdee3..476a4bb.diff`.
+- Fresh capable Reviewer `ses_df0aeffd2ffe6IGRovWI99pBf3`: spec compliant/local quality Approved first pass; no new findings/fix loop. Checked complete diff/report and focused unchanged prefix/source risks without rerunning suite.
+- Native selected-SDK/compile/runtime/macARM and five total Task4/5 native-only tests remain mandatory Task8. Builder retains rather than waives those cannot-verify items. Existing Cargo-unused-ureq diagnostic stays real-use Task6/final. Task5 complete locally; Tasks6–9 pending.
+
+## Task6 — candidate secure public workers
+
+- Fresh capable worker `ses_df0a89aafffemnbTPKB8KSJV4O`, BASE `476a4bb06e1e7ccac748d24f883a709ecbd79dc6`; only public mod/http/tests and lib registration. Builder metadata/model/platform/dependencies unchanged.
+- Actual worker-local ureq Agent/config/DNS/TLS/body/drop; fixed HTTPS family hosts, verified WebPKI/Rustls, proxy disabled, redirects0/status200/body128/header8192, bounded worker phase timeouts. Capacity2 channel, start-once two detached function-pointer workers and at most2 nonblocking ready reads with cutoff/family validation; no production main join or cleanup wait.
+- Worker initial HTTP/queue behavioral RED/GREEN gave8+12 tests and131 full tests. Builder independently checked those gates/feature graph, then found pre-review ASCII-contract defect IPN-T6-PRE1: Unicode `.trim()` accepted NBSP/em-space wrappers. Minimal Rust1.100 expression repro confirmed both families; no external request.
+- Fix handoff to original worker added5 actual parser/response regressions, observed4 Some-vs-None failures, then changed only `.trim()` to `.trim_ascii()`. Final13 HTTP+12 queue tests and136 complete tests pass. Updated exact worker evidence/hashes are in `task-6-report.md` appendIPN-T6-PRE1.
+- Builder independently reran final fmt exit0, full workspace/all-target tests **136 passed**,0 failed/ignored, Clippy -D warnings exit0 **without warnings**, whitespace check; inspected actual sources and regression evidence. Feature graph previously independently observed unchanged approved Rustls-only policy; parser-only fix did not touch graph inputs.
+- Existing Minor IPN-T1-R1-001 is resolved in candidate through genuine production ureq use, no suppression/fakeuse/manifest/lock/feature change. Fresh review must verify resolution; final whole-change review still sees its history.
+- Task7 same-coordinator/process/offline/help/version/render gates and Task8 actual native/macARM/SDK gates remain pending. No live icanhazip/TLS/provider timing or executable claim. Initial fresh Task6 review/acceptance pending.
