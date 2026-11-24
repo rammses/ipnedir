@@ -102,7 +102,7 @@ continuity: a replacement with the same index/name and nondecreasing counters is
 indistinguishable from a continuing device. These are snapshot observations, not
 proof of continuity or a bandwidth-capacity measurement.
 
-## Intended compatibility (verification pending)
+## Compatibility and native evidence (verification pending)
 
 Planned deployment baselines are **macOS 15** and **GNU/Linux with glibc 2.35**
 (Ubuntu 22.04 equivalent); older systems and musl are not promised. The intended
@@ -113,9 +113,33 @@ targets are:
 - `aarch64-unknown-linux-gnu` (ARM64)
 - `x86_64-unknown-linux-gnu` (x86-64)
 
-These are intended targets, **not** a verified four-platform runtime matrix.
-Portable decoder fixtures and Linux host tests do not replace actual macOS SDK
-and native-architecture execution. Any eventual
+The single CI/artifact-name manifest is [`release/targets.tsv`](release/targets.tsv).
+`cargo +1.100.0 run --locked -p xtask -- matrix` validates it and emits the
+GitHub Actions include matrix as JSON. `xtask` is workspace developer tooling,
+not a second installed user application. The read-only verification workflow
+uses native `ubuntu-22.04`, `ubuntu-22.04-arm`, `macos-15`, and `macos-15-intel`
+runners. GNU/Linux legs require Ubuntu 22.04/glibc 2.35 and record their actual
+kernel; macOS legs require macOS 15 and deployment target `15.0`.
+
+Each leg records the exact revision, runner image, architecture, compiler,
+baseline/SDK, input and binary hashes, tests, release build, and the explicit
+binary's version/offline output. Before Darwin adapter tests, a developer-only
+C probe compiles against the **actually selected SDK headers**, checking packed
+IFMIB/media/route/sockaddr layouts and selectors; a mismatch fails the gate.
+Linux CI traces the actual offline binary, fails on trace-tool/process failure
+or sysfs interface-data access, and records namespace-local socket/ioctl
+provenance. Optional driver speed and above-32-bit traffic not exposed by a
+runner are identified as uncorroborated, never manufactured. Native smoke tests
+require no Internet, Wi-Fi, physical Ethernet, or host network changes.
+
+These are prepared gates, **not** a verified four-platform runtime matrix.
+Current local evidence remains x86-64 GNU/Linux only, not proof of the pinned
+Ubuntu 22.04 baseline or any ARM/macOS leg. All four actual native results and
+selected-SDK/runtime evidence remain blocked pending owner-authorized native
+runner/repository access. Portable fixtures, YAML preparation, or cross builds
+do not close those gates. The workflow has read-only repository permissions,
+uses no secrets, and retains only explicit verification artifacts; it does not
+publish archives/releases or alter a tap. Any eventual
 `brew install rammses/tap/ipnedir` requires separately authorized release/tap
 publication; it is not a current installation instruction.
 

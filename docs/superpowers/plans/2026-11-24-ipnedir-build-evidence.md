@@ -14,8 +14,8 @@
 ## Required gates still pending
 
 - Task1 complete after fresh spec/quality approval; one documented nonblocking diagnostic deferred to Task6/final review.
-- Tasks1–6 complete; Task7 independently checked executable candidate below, fresh review pending. Actual Darwin/native evidence remains Task8.
-- Task8 actual macOS/ARM/native four-target evidence: unproved, not waived.
+- Tasks1–7 complete for their approved local gates; Task7 has one nonblocking test-capture finding deferred to final review. Actual Darwin/native evidence remains Task8.
+- Task8 local preparation/checks recorded below; full actual four-native acceptance **BLOCKED**, not waived.
 - Task9 archive/formula/release preparation and separately authorized publication/Homebrew evidence: not started.
 - Whole-change independent review/final acceptance: pending.
 
@@ -123,3 +123,21 @@
 - Builder independently ran final fmt0, complete workspace/all-target171tests (0 failed/ignored), Clippy -D warnings0 warning-free, named binary build0, explicit binary --version/--help/--offline all0. Inspected app/render/main and composition/README diff plus full worker evidence. Actual offline output showed all9 interfaces/13 addresses, states/scopes/MTUs, separateRX/TX/driver speed and disabled public results. No bare/default online run or endpoint request.
 - Worker offline comparator additionally matched read-only native inventory/default observations; reported no unneeded private data dump. Exact RED/GREEN/process elapsed observations and source hashes in ignored `task-7-report.md`; those callback tests are ownership/process proofs, not live DNS/TLS/provider timing claims.
 - README distinguishes Linux host verification from intended macOS15/glibc2.35/four-target matrix and future Homebrew publication; migration guidance is manual only, user alias/prototype unchanged. Native/macARM/SDK/trace/four-runner gates still Task8, release/tap/Homebrew still separate Task9 authority. Fresh local task review and acceptance pending.
+
+### Task7 local acceptance
+
+- Commit `7c973b895ab43996f442e3108a3a204747e92ae1`, base `70d43cece14201507fc65a419ab78695d2b291ee`; required package `review-70d43ce..7c973b8.diff`.
+- Fresh capable Reviewer `ses_df0772c4effeeoyA4kKrE5Y4K2`: Spec compliant, quality Approved first pass; no Critical/Important findings. Confirmed causal lifecycle proof using real coordinator, permanently blocked workers, normalcleanup and harnessreturn, actual write/flush pipe errors and lazy factory/cutoff behavior.
+- Minor IPN-T7-R1-001: native CLI-process test capture waits for termination before draining; an actual report above pipe capacity could block child and cause a false watchdog test failure. Watchdog prevents indefinite hang; no production defect established. Reviewer measured current undrained pipe capacity65536bytes without modifying network inventory. Defer for final whole-change triage; do not silently enlarge later task scope.
+- Actual macOS/ARM/SDK/four-native/trace and release checks remain unresolved Task8/9, not implied by localCLI acceptance. No live provider timing/endpoint request, alias migration, installation, remote write or publication. Task7 complete locally; Task8 next.
+
+## Task8 — local preparation complete, full native acceptance BLOCKED
+
+- Fresh capable Implementer `ses_df06f4671ffe8ROea6LnzracT8`, BASE `7c973b895ab43996f442e3108a3a204747e92ae1`, reports **BLOCKED** solely at actual four-native access/results after completing approved local preparation. No DONE/DONE_WITH_CONCERNS or matrix-success claim.
+- Added strict four-target TSV/std-only xtask parser+matrix CLI, workspace membership/lock entry only (no registry version/feature changes), actual native-smoke/selected-SDK header C probe, read-only four-runner CI and truthful compatibility docs. No app/native/public code changes or Task9 source. Existing Task7 capture minor remains unmodified.
+- Worker meaningful parser/matrix/CLI RED/GREEN:11 xtask tests; final whole workspace **185 passed**, fmt/Clippy warning-free. Only lock delta is xtask->ipnedir workspace package. Worker static-validated workflow YAML,14 extracted shell scripts and6 Python blocks; this does not prove GitHub schema/action execution or any native-SDK runtime.
+- Builder independently ran fmt0, full workspace/all-target185tests (0 failed/ignored), Clippy -D warnings0warning-free, actual xtask matrix command0/exact four rows, diff/lock/source/workflow inspection, named x86_64 target release build0, explicit release version0, and file-only strace of explicit release --offline0.
+- Builder actual seven-line trace `.superpowers/sdd/2026-11-24-ipnedir-implementation/task-8-builder-native-files.trace` contains successful exec/exit and loader/libc/libgcc/proc-self-maps only, no `/sys`/interface-data file access. This is one host run, not proof of all failures, socket payloads or four-native matrix; worker's independently validated trace/source evidence is in task-8-report.md and ignored task-8-artifacts.
+- Actual host Ubuntu24.04/glibc2.39 Linuxx64 is **not** approved Ubuntu22.04/glibc2.35. All four required rows remain **UNRUN**: ubuntu22.04 x64, ubuntu22.04-arm, macos15 ARM, macos15-intel. Native Darwin SDK/build/runtime, all five Task4/5 native tests plus new SDK/IFMIB corroboration and Linux pinned-baseline/socket traces remain pending.
+- Verified capability gap: gh/brew/xcrun unavailable, strace available, no supplied owner-authorized remote/native runner access/results. Missing gh is not proof the remote repository does not exist. No install/auth/credential inspection/remote create/push/dispatch was attempted to unblock this.
+- Task8 is **incomplete/BLOCKED**, Task9 and whole-change/final acceptance are not started. A local code checkpoint/review can inspect preparation without accepting the missing native gate. Need owner-authorized exact four-native execution/log artifacts or supplied native environments; publication/tap/alias changes remain separate authority.

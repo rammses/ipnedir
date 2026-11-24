@@ -1,0 +1,254 @@
+name: Native verification (no publication)
+
+"on":
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  matrix:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Exact Rust toolchain
+        run: rustup toolchain install 1.100.0 --profile minimal --component rustfmt --component clippy --no-self-update
+      - name: Validate the actual manifest and emit its matrix
+        id: targets
+        run: |
+          set -euo pipefail
+          cargo +1.100.0 test --locked -p xtask
+          matrix="$(cargo +1.100.0 run --locked -p xtask -- matrix)"
+          printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
+
+  native:
+    needs: matrix
+    name: Native ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.matrix.outputs.matrix) }}
+    env:
+      TARGET: ${{ matrix.target }}
+      APPROVED_RUNNER: ${{ matrix.runner }}
+      EXPECTED_ARCHIVE: ${{ matrix.archive }}
+      MACOSX_DEPLOYMENT_TARGET: "15.0"
+      CARGO_TERM_COLOR: never
+      NO_COLOR: "1"
+      TERM: dumb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Record exact revision, runner image, architecture and baseline
+        run: |
+          set -euo pipefail
+          mkdir -p target/native-evidence
+          {
+            printf 'revision='; git rev-parse HEAD
+            printf 'event_revision=%s\nrun_id=%s\nrun_attempt=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            printf 'target=%s\nrunner_label=%s\narchive_name_only=%s\n' "$TARGET" "$APPROVED_RUNNER" "$EXPECTED_ARCHIVE"
+            : "${ImageOS:?actual runner image identity required}" "${ImageVersion:?actual runner image version required}"
+            printf 'runner_os=%s\nrunner_arch=%s\nimage_os=%s\nimage_version=%s\n' "$RUNNER_OS" "$RUNNER_ARCH" "$ImageOS" "$ImageVersion"
+            uname -srvm
+            case "$TARGET" in
+              *-unknown-linux-gnu)
+                test "$(uname -s)" = Linux
+                test "$(uname -m)" = "${TARGET%%-*}"
+                . /etc/os-release
+                printf 'os=%s\nversion=%s\n' "$ID" "$VERSION_ID"
+                test "$ID" = ubuntu && test "$VERSION_ID" = 22.04
+                glibc="$(getconf GNU_LIBC_VERSION)"
+                printf 'glibc=%s\n' "$glibc"
+                test "$glibc" = 'glibc 2.35'
+                ;;
+              *-apple-darwin)
+                test "$(uname -s)" = Darwin
+                os="$(sw_vers -productVersion)"
+                printf 'macos=%s\nMACOSX_DEPLOYMENT_TARGET=%s\n' "$os" "$MACOSX_DEPLOYMENT_TARGET"
+                test "${os%%.*}" = 15
+                expected="${TARGET%%-*}"
+                if test "$expected" = aarch64; then expected=arm64; fi
+                test "$(uname -m)" = "$expected"
+                translated="$(sysctl -n sysctl.proc_translated 2>/dev/null || true)"
+                printf 'proc_translated=%s\n' "${translated:-not_exposed}"
+                test "${translated:-0}" = 0
+                xcodebuild -version
+                xcode-select -p
+                sdk="$(xcrun --sdk macosx --show-sdk-path)"
+                printf 'sdk=%s\nsdk_version=' "$sdk"
+                xcrun --sdk macosx --show-sdk-version
+                xcrun --sdk macosx clang --version
+                shasum -a 256 "$sdk/usr/include/net/if.h" "$sdk/usr/include/net/if_media.h" "$sdk/usr/include/net/if_mib.h" "$sdk/usr/include/net/if_dl.h" "$sdk/usr/include/net/route.h" "$sdk/usr/include/sys/socket.h" "$sdk/usr/include/sys/sockio.h" "$sdk/usr/include/ifaddrs.h" "$sdk/usr/include/netinet/in.h" > target/native-evidence/sdk-headers.sha256
+                ;;
+              *) exit 1 ;;
+            esac
+          } 2>&1 | tee target/native-evidence/baseline.log
+      - name: Exact Rust toolchain
+        run: rustup toolchain install 1.100.0 --profile minimal --component rustfmt --component clippy --no-self-update
+      - name: Prove the compiler host is the native target, not a cross build
+        run: |
+          set -euo pipefail
+          rustc +1.100.0 -vV | tee target/native-evidence/toolchain.log
+          cargo +1.100.0 --version | tee -a target/native-evidence/toolchain.log
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          lines = Path('target/native-evidence/toolchain.log').read_text().splitlines()
+          assert lines[0].startswith('rustc 1.100.0 '), lines[0]
+          assert 'host: ' + os.environ['TARGET'] in lines, lines
+          PY
+      - name: Verify actual selected macOS SDK headers BEFORE any adapter tests
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          cargo +1.100.0 test --locked --package ipnedir --test native_smoke darwin_selected_sdk_headers_match_native_contract -- --exact --nocapture 2>&1 | tee target/native-evidence/sdk-gate.log
+          python3 - <<'PY'
+          from pathlib import Path
+          result = Path('target/native-evidence/sdk-gate.log').read_text()
+          assert '1 passed; 0 failed' in result, 'SDK gate must actually execute, not select zero tests'
+          assert Path('target/native-evidence/sdk-probe-values.txt').stat().st_size > 0
+          PY
+      - name: Formatting
+        run: cargo +1.100.0 fmt --all --check 2>&1 | tee target/native-evidence/fmt.log
+      - name: All native workspace and integration tests (including Task4/5 gates)
+        run: cargo +1.100.0 test --workspace --all-targets --locked -- --nocapture 2>&1 | tee target/native-evidence/tests.log
+      - name: Warning-free Clippy
+        run: cargo +1.100.0 clippy --workspace --all-targets --locked -- -D warnings 2>&1 | tee target/native-evidence/clippy.log
+      - name: Named target release binary
+        run: cargo +1.100.0 build --release --locked --package ipnedir --bin ipnedir --target "$TARGET" 2>&1 | tee target/native-evidence/build.log
+      - name: Actual target binary version/offline output and native ABI
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          binary = './target/' + os.environ['TARGET'] + '/release/ipnedir'
+          metadata = json.loads(subprocess.check_output(['cargo', '+1.100.0', 'metadata', '--locked', '--no-deps', '--format-version', '1']))
+          version = next(p['version'] for p in metadata['packages'] if p['name'] == 'ipnedir')
+          for mode in ('version', 'offline'):
+              result = subprocess.run([binary, '--' + mode], capture_output=True, timeout=20)
+              Path('target/native-evidence/' + mode + '.txt').write_bytes(result.stdout)
+              Path('target/native-evidence/' + mode + '.stderr').write_bytes(result.stderr)
+              assert result.returncode == 0, (mode, result.returncode, result.stderr)
+              assert not result.stderr, (mode, result.stderr)
+              if mode == 'version':
+                  assert result.stdout == ('ipnedir ' + version + '\n').encode(), result.stdout
+              else:
+                  assert result.stdout.count(b'disabled (--offline)') == 2, result.stdout
+                  assert b'\x1b' not in result.stdout, 'nonterminal offline report must not contain ANSI escapes'
+          PY
+          binary="./target/$TARGET/release/ipnedir"
+          file "$binary" | tee target/native-evidence/binary-abi.txt
+          if test "$RUNNER_OS" = macOS; then
+            xcrun otool -l "$binary" >> target/native-evidence/binary-abi.txt
+            python3 - <<'PY'
+          import re
+          from pathlib import Path
+          abi = Path('target/native-evidence/binary-abi.txt').read_text()
+          assert re.search(r'\bminos\s+15\.0(?:\.0)?\s', abi), 'deployment target 15.0 must be present in the actual binary'
+          PY
+          else
+            readelf --version-info "$binary" >> target/native-evidence/binary-abi.txt
+            python3 - <<'PY'
+          import re
+          from pathlib import Path
+          abi = Path('target/native-evidence/binary-abi.txt').read_text()
+          versions = {tuple(map(int, version.split('.'))) for version in re.findall(r'GLIBC_(\d+(?:\.\d+)+)', abi)}
+          assert versions, 'no actual glibc ABI requirements recorded'
+          assert max(versions) <= (2, 35), sorted(versions)
+          PY
+          fi
+      - name: Supply developer-only Linux tracing tool in the ephemeral runner
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          if ! command -v strace >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install --no-install-recommends -y strace
+          fi
+          strace --version > target/native-evidence/strace-version.txt
+      - name: Trace the actual offline binary, reject sysfs data and confirm socket/ioctl provenance
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          strace -f -e trace=%file -o target/native-evidence/native-files.trace "./target/$TARGET/release/ipnedir" --offline > target/native-evidence/traced-offline.txt 2> target/native-evidence/trace.stderr
+          strace -f -e trace=%network,ioctl -o target/native-evidence/native-sockets.trace "./target/$TARGET/release/ipnedir" --offline > target/native-evidence/socket-offline.txt 2> target/native-evidence/socket-trace.stderr
+          python3 - <<'PY' | tee target/native-evidence/trace-validation.txt
+          import ast, re
+          from pathlib import Path
+          trace = Path('target/native-evidence/native-files.trace').read_text()
+          assert trace.strip() and 'execve(' in trace and '+++ exited with 0 +++' in trace, 'trace must be a successful real process, not empty evidence'
+          fields = {'statistics', 'rx_bytes', 'tx_bytes', 'mtu', 'speed', 'operstate', 'carrier', 'ifindex'}
+          def forbidden(path):
+              parts = path.split('/')
+              # Conservatively reject any /sys view, including /proc/self/root/sys,
+              # and relative interface-field access via an already open directory.
+              return 'sys' in parts or (not path.startswith('/') and bool(fields.intersection(parts))) or path.startswith('class/net')
+          for bad in ('/sys/class/net/eth0/statistics/rx_bytes', '/sys/devices/virtual/net/lo/speed', '/proc/self/root/sys/class/net/lo/mtu', 'statistics/rx_bytes', 'class/net/lo/address'):
+              assert forbidden(bad), bad
+          assert not forbidden('/usr/lib/libc.so.6')
+          paths = [ast.literal_eval(token) for token in re.findall(r'"(?:[^"\\]|\\.)*"', trace)]
+          assert paths, 'no file paths decoded'
+          rejected = [path for path in paths if forbidden(path)]
+          assert not rejected, ('forbidden sysfs/interface-data requests', rejected)
+          sockets = Path('target/native-evidence/native-sockets.trace').read_text()
+          assert sockets.strip() and '+++ exited with 0 +++' in sockets
+          assert 'AF_NETLINK' in sockets and 'NETLINK_ROUTE' in sockets, 'actual namespace-local netlink required'
+          assert 'SIOCETHTOOL' in sockets or '0x8946' in sockets, 'actual read-only driver ioctl attempt required; success is optional'
+          assert Path('target/native-evidence/traced-offline.txt').read_bytes().count(b'disabled (--offline)') == 2
+          print('Successful file/socket traces; decoded paths=' + str(len(paths)) + '; no sysfs/interface-data requests; actual NETLINK_ROUTE and ethtool ioctl attempts observed.')
+          print('Optional-failure/wrong-view assembly regression is also required in the complete native test suite; no host network changes or synthetic traffic.')
+          PY
+      - name: Hash exact verification inputs and native binary
+        run: |
+          set -euo pipefail
+          shasum -a 256 Cargo.toml Cargo.lock rust-toolchain.toml release/targets.tsv xtask/Cargo.toml xtask/src/lib.rs xtask/src/main.rs xtask/src/targets.rs tests/native_smoke.rs .github/workflows/ci.yml "target/$TARGET/release/ipnedir" > target/native-evidence/inputs-and-binary.sha256
+      - name: Retain only explicit verification evidence (never publication)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: native-verification-${{ matrix.target }}-${{ github.sha }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          path: |
+            target/native-evidence/baseline.log
+            target/native-evidence/toolchain.log
+            target/native-evidence/sdk-gate.log
+            target/native-evidence/sdk-selection.txt
+            target/native-evidence/sdk-headers.sha256
+            target/native-evidence/sdk-probe.c
+            target/native-evidence/sdk-probe-build.log
+            target/native-evidence/sdk-probe-values.txt
+            target/native-evidence/fmt.log
+            target/native-evidence/tests.log
+            target/native-evidence/clippy.log
+            target/native-evidence/build.log
+            target/native-evidence/version.txt
+            target/native-evidence/version.stderr
+            target/native-evidence/offline.txt
+            target/native-evidence/offline.stderr
+            target/native-evidence/binary-abi.txt
+            target/native-evidence/strace-version.txt
+            target/native-evidence/native-files.trace
+            target/native-evidence/native-sockets.trace
+            target/native-evidence/traced-offline.txt
+            target/native-evidence/trace.stderr
+            target/native-evidence/socket-offline.txt
+            target/native-evidence/socket-trace.stderr
+            target/native-evidence/trace-validation.txt
+            target/native-evidence/inputs-and-binary.sha256
+            target/${{ matrix.target }}/release/ipnedir
