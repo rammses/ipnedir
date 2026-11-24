@@ -1,0 +1,11 @@
+[package]
+name = "ipnedir"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100.0"
+license = "MIT"
+description = "A one-shot native network-interface and traffic report"
+
+[dependencies]
+libc = "=0.2.191"
+ureq = { version = "=3.5.2", default-features = false, features = ["rustls"] }
