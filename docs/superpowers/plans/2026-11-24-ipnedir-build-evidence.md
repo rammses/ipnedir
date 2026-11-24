@@ -13,8 +13,8 @@
 
 ## Required gates still pending
 
-- Task1 implementation and worker/Builder checks recorded below; fresh task review pending.
-- Tasks2–7 implementation/reviews: not started.
+- Task1 complete after fresh spec/quality approval; one documented nonblocking diagnostic deferred to Task6/final review.
+- Task2 candidate implementation independently checked below; fresh review pending. Tasks3–7 not started.
 - Task8 actual macOS/ARM/native four-target evidence: unproved, not waived.
 - Task9 archive/formula/release preparation and separately authorized publication/Homebrew evidence: not started.
 - Whole-change independent review/final acceptance: pending.
@@ -29,3 +29,21 @@
 - Observed diagnostic, not hidden: Clippy's Cargo frontend warns `unused dependency ureq`, manifest line11, `cargo::unused_dependencies` default warn. The mandatory early dependency is not used until public-worker task; command exits0. No fake use/removal/suppression added. Fresh reviewer must assess it; no all-output-pristine or lint-warning-free claim made.
 - Initial worker formatting check found rustfmt layout differences; worker applied formatting-only corrections, then final formatting check and Builder rerun passed. No pre-existing app test failures existed; intentional RED and resolved formatting are distinguished from baseline failures.
 - Source inspected against Task1 ownership/interfaces and all behavior fixtures. Exact report/TDD excerpts: ignored `.superpowers/sdd/2026-11-24-ipnedir-implementation/task-1-report.md`. Fresh combined spec/quality review and final task acceptance remain pending.
+
+### Task1 acceptance
+
+- Commit `39365aa30f112f6ad52721ef5656a4ce940e0bc5`, base `6323cde0402444e1ca5092546d22d11113fa5428`; mandatory script-generated review package `review-6323cde..39365aa.diff`.
+- Fresh capable combined Reviewer `ses_df1182eb5ffeV4BUl44Uxy296C`: Spec compliant, Task quality Approved; no Critical/Important findings, no fix loop. First-pass acceptance passed for this task only.
+- Minor IPN-T1-R1-001: plan-mandated unused-ureq Cargo warning is diagnostic debt, assigned to real Task6 HTTP use and final whole-change review. No warning-clean claim.
+- Review's cannot-verify items are later adapter prefix normalization (2/4), runtime early exits/output/lifecycle (7), and actual macOS/native evidence (8); Builder confirms none belongs to the library-only Task1 deliverable, and no later gate is waived or marked passed.
+- Task1 complete. Tasks2–9 and final application/native/release acceptance remain pending.
+
+## Task2 — candidate Linux snapshot and native boundary
+
+- Fresh capable Implementer `ses_df114aa1cffeREfHwuekD3HvCp`; BASE `39365aa30f112f6ad52721ef5656a4ce940e0bc5`. Worker changed only Linux/platform modules plus lib registration and its ignored report; preserved Builder metadata and model/Cargo/lock/docs.
+- Added complete native NETLINK_ROUTE GETLINK/GETADDR snapshots, checked portable wire/counter/address decoders, bounded nonblocking transport and RAII descriptors, read-only ethtool handshake/fallback with raw identity checks. No routes/public worker/binary/sysfs fallback or privileged/network-setting operation.
+- Worker behavioral RED/GREEN: stats/address/inventory, transport sender/framing/errors/deadline/retry/budgets, ethtool handshake/sentinels/identity and native assembly/socket ownership. Final focused counts:10 snapshot,12 transport,5 ethtool. Report `.superpowers/sdd/2026-11-24-ipnedir-implementation/task-2-report.md` includes exact commands/failure excerpts/source hashes and ABI citations.
+- Builder independently ran fmt (exit0), complete workspace/all-target tests (**45 passed**,0 failed/ignored), Clippy -D warnings (exit0), diff whitespace (exit0), and inspected native transport/decoder/ioctl sources and worker evidence against scope.
+- Native read-only smoke passed:9 interfaces and9 counter samples, loopback included; three optional10Gbit/s driver reports, other speed values unavailable. Live counters happened to be below2^32; >32-bit behavior is fixture-proven, not falsely described as live evidence. Driver reports are not throughput/physical-capacity measurements.
+- Baseline Cargo unused-ureq diagnostic IPN-T1-R1-001 remains visible; no new Rust/Clippy lint failure or suppressed diagnostic. Worker self-review corrected state mapping and final-deadline/GET-kind/filtered-dump cases via additional observed RED/GREEN tests before reporting.
+- Portable source eligibility fixtures are not claimed as actual no-sysfs syscall-trace evidence; Task8 tracing/macOS/ARM/native-matrix gates remain unrun. Candidate commit and fresh combined review/acceptance pending.
