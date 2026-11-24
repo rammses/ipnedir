@@ -1,8 +1,11 @@
 use super::ethtool::{self, Access};
 use super::inventory::{attach_addresses, decode_links, decode_stats64};
 use super::netlink::{self, Datagram, Transport};
+use super::{nexthops, routes};
+use crate::model::Coverage;
 use crate::model::{Address, State};
 use crate::model::{CollectError, InterfaceId};
+use std::collections::{BTreeMap, BTreeSet};
 use std::{collections::VecDeque, io, time::Duration};
 use std::{net::IpAddr, time::Instant};
 
@@ -958,4 +961,569 @@ fn linux_transport_native_socket_is_bound_nonblocking_cloexec_and_owned() {
     // not dereference memory or transfer ownership.
     assert_eq!(unsafe { libc::fcntl(high, libc::F_GETFD) }, -1);
     assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::EBADF));
+}
+
+fn route(family: u8, prefix: u8, table: u8, kind: u8, attrs: &[u8]) -> Vec<u8> {
+    // Linux rtmsg: 12 bytes, followed by four-byte-aligned rtattrs.
+    let mut payload = vec![family, prefix, 0, 0, table, 4, 0, kind, 0, 0, 0, 0];
+    payload.extend(attrs);
+    message(24, 7, &payload) // RTM_NEWROUTE
+}
+
+fn inline_hop(index: i32, flags: u8, attrs: &[u8]) -> Vec<u8> {
+    let len = 8 + attrs.len();
+    let mut bytes = u16::try_from(len).unwrap().to_ne_bytes().to_vec();
+    bytes.extend([flags, 0]); // rtnh_flags, rtnh_hops (weight, not member count)
+    bytes.extend(index.to_ne_bytes());
+    bytes.extend(attrs);
+    bytes.resize((len + 3) & !3, 0);
+    bytes
+}
+
+fn route_fixtures() -> (Vec<u8>, Vec<u8>) {
+    let mut main = attr(4, &2_u32.to_ne_bytes());
+    main.extend(attr(5, &[192, 0, 2, 1])); // Gateway is network-order address bytes.
+    let mut v4 = route(2, 0, 254, 1, &main);
+    let mut policy = attr(15, &100_u32.to_ne_bytes()); // RTA_TABLE overrides header.
+    policy.extend(attr(4, &7_u32.to_ne_bytes()));
+    v4.extend(route(2, 0, 0, 1, &policy));
+    v4.extend(route(2, 0, 100, 1, &attr(4, &11_u32.to_ne_bytes()))); // No gateway.
+
+    let mut multipath = inline_hop(
+        7,
+        0,
+        &attr(
+            5,
+            &[0x20, 1, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+        ),
+    );
+    multipath.extend(inline_hop(9, 0, &[]));
+    let v6 = route(10, 0, 100, 1, &attr(9, &multipath));
+    (v4, v6)
+}
+
+#[test]
+fn linux_routes_all_tables_both_families_inline_and_gateway_free_defaults() {
+    let (v4, v6) = route_fixtures();
+    assert_eq!(
+        routes::decode(&v4, &BTreeMap::new()),
+        Coverage::Complete(BTreeSet::from([2, 7, 11]))
+    );
+    assert_eq!(
+        routes::decode(&v6, &BTreeMap::new()),
+        Coverage::Complete(BTreeSet::from([7, 9]))
+    );
+    let mut unaligned = vec![0xff];
+    unaligned.extend(v6);
+    assert_eq!(
+        routes::decode(&unaligned[1..], &BTreeMap::new()),
+        Coverage::Complete(BTreeSet::from([7, 9]))
+    );
+}
+
+#[test]
+fn linux_routes_exclude_nondefaults_nonforwarding_and_dead_linkdown_members() {
+    let mut bytes = route(2, 24, 254, 1, &attr(4, &30_u32.to_ne_bytes()));
+    for kind in [2, 3, 4, 5, 6, 7, 8, 9, 10, 11] {
+        bytes.extend(route(2, 0, 254, kind, &attr(4, &31_u32.to_ne_bytes())));
+    }
+    for flags in [1_u32, 16] {
+        let mut dead = route(2, 0, 254, 1, &attr(4, &32_u32.to_ne_bytes()));
+        dead[24..28].copy_from_slice(&flags.to_ne_bytes());
+        bytes.extend(dead);
+    }
+    let mut multipath = inline_hop(7, 4 | 8, &attr(6000, &[0x55]));
+    multipath.extend(inline_hop(8, 1, &[]));
+    multipath.extend(inline_hop(9, 16, &[]));
+    bytes.extend(route(10, 0, 254, 1, &attr(9, &multipath)));
+    assert_eq!(
+        routes::decode(&bytes, &BTreeMap::new()),
+        Coverage::Complete(BTreeSet::from([7]))
+    );
+}
+
+#[test]
+fn linux_routes_source_specific_zero_destination_and_optional_attributes() {
+    let mut attrs = attr(1, &[0; 16]);
+    attrs.extend(attr(
+        2,
+        &[0x20, 1, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    ));
+    attrs.extend(attr(15, &70_000_u32.to_ne_bytes()));
+    attrs.extend(attr(4, &9_u32.to_ne_bytes()));
+    attrs.extend(attr(6000, &[0xff]));
+    let mut bytes = route(10, 0, 254, 1, &attrs);
+    bytes[18] = 64; // rtm_src_len: still a configured destination default.
+    assert_eq!(
+        routes::decode(&bytes, &BTreeMap::new()),
+        Coverage::Complete(BTreeSet::from([9]))
+    );
+    let mut nonzero = attr(1, &[192, 0, 2, 0]);
+    nonzero.extend(attr(4, &12_u32.to_ne_bytes()));
+    assert_eq!(
+        routes::decode(&route(2, 0, 254, 1, &nonzero), &BTreeMap::new()),
+        Coverage::Complete(BTreeSet::new())
+    );
+    assert_eq!(
+        routes::decode(&[], &BTreeMap::new()),
+        Coverage::Complete(BTreeSet::new())
+    );
+}
+
+#[test]
+fn linux_routes_malformed_wire_and_missing_forwarding_are_explicit_partial() {
+    let valid = route(2, 0, 254, 1, &attr(4, &2_u32.to_ne_bytes()));
+    let malformed = [
+        message(24, 7, &[2; 11]),
+        route(2, 0, 254, 1, &[3, 0, 4, 0]), // attr length < header
+        route(2, 0, 254, 1, &attr(4, &[2; 3])),
+        route(2, 0, 254, 1, &attr(15, &[0; 3])),
+        route(2, 0, 254, 1, &attr(1, &[0; 16])), // IPv4 DST must be four bytes.
+        route(2, 0, 254, 1, &attr(9, &[8, 0, 0, 0, 7, 0, 0])), // short rtnexthop
+        route(2, 0, 254, 1, &attr(9, &[7, 0, 0, 0, 7, 0, 0, 0])),
+        route(2, 0, 254, 1, &attr(9, &inline_hop(-1, 0, &[]))),
+        route(2, 0, 254, 1, &attr(9, &inline_hop(0, 0, &[]))),
+        route(2, 0, 254, 1, &attr(4, &0_u32.to_ne_bytes())),
+        route(2, 0, 254, 1, &attr(4, &u32::MAX.to_ne_bytes())),
+        route(2, 0, 254, 1, &[]),
+        route(99, 0, 254, 1, &attr(4, &8_u32.to_ne_bytes())),
+        message(2, 7, &(-22_i32).to_ne_bytes()), // NLMSG_ERROR cannot mean no defaults.
+        vec![0; 15],
+    ];
+    for bad in malformed {
+        let mut bytes = valid.clone();
+        bytes.extend(&bad);
+        assert!(
+            matches!(routes::decode(&bytes, &BTreeMap::new()), Coverage::Incomplete { value, reason } if value == BTreeSet::from([2]) && !reason.is_empty()),
+            "bad wire: {bad:?}"
+        );
+    }
+    // Retain already decoded inline members if a later record is truncated.
+    let mut partial = inline_hop(7, 0, &[]);
+    partial.extend([8, 0, 0]);
+    assert!(
+        matches!(routes::decode(&route(10, 0, 254, 1, &attr(9, &partial)), &BTreeMap::new()), Coverage::Incomplete { value, .. } if value == BTreeSet::from([7]))
+    );
+}
+
+#[test]
+fn linux_routes_query_constructs_family_all_table_dumps_and_skips_unneeded_objects() {
+    let (v4, v6) = route_fixtures();
+    let mut calls = Vec::new();
+    let result = super::defaults_with(|kind, payload| {
+        calls.push((kind, payload.to_vec()));
+        match calls.len() {
+            1 => Ok(v4.clone()),
+            2 => Ok(v6.clone()),
+            _ => panic!("direct/inline routes must not query objects"),
+        }
+    });
+    assert_eq!(
+        calls,
+        vec![
+            (26, vec![2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+            (26, vec![10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        ]
+    );
+    assert_eq!(result.v4, Coverage::Complete(BTreeSet::from([2, 7, 11])));
+    assert_eq!(result.v6, Coverage::Complete(BTreeSet::from([7, 9])));
+}
+
+#[test]
+fn linux_routes_query_failures_are_per_family_not_empty_success() {
+    let mut calls = 0;
+    let result = super::defaults_with(|kind, payload| {
+        calls += 1;
+        assert_eq!(kind, 26);
+        match payload[0] {
+            2 => Err(CollectError("denied".into())),
+            10 => Ok(route(10, 0, 254, 1, &attr(4, &9_u32.to_ne_bytes()))),
+            _ => panic!("wrong family"),
+        }
+    });
+    assert_eq!(calls, 2);
+    assert_eq!(
+        result.v4,
+        Coverage::Unavailable("IPv4 route dump: denied".into())
+    );
+    assert_eq!(result.v6, Coverage::Complete(BTreeSet::from([9])));
+}
+
+fn nh_object(family: u8, flags: u32, id: u32, attrs: &[u8]) -> Vec<u8> {
+    let mut payload = vec![family, 0, 4, 0];
+    payload.extend(flags.to_ne_bytes()); // nhmsg is eight bytes, not rtmsg.
+    payload.extend(attr(1, &id.to_ne_bytes()));
+    payload.extend(attrs);
+    message(104, 7, &payload)
+}
+
+fn nh_group(ids: &[u32]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for id in ids {
+        bytes.extend(id.to_ne_bytes());
+        bytes.extend([0xfe, 0, 0, 0]); // ID + weight/reserved, NOT nested attrs.
+    }
+    attr(2, &bytes)
+}
+
+fn hop_fixtures() -> BTreeMap<u32, nexthops::Hop> {
+    use nexthops::Hop;
+    BTreeMap::from([
+        (
+            10,
+            Hop::Device {
+                index: 7,
+                usable: true,
+            },
+        ),
+        (
+            11,
+            Hop::Device {
+                index: 9,
+                usable: true,
+            },
+        ),
+        (20, Hop::Group(vec![10, 11])),
+    ])
+}
+
+#[test]
+fn linux_nexthops_members_direct_group_and_dead_devices() {
+    let mut hops = hop_fixtures();
+    assert_eq!(
+        nexthops::members(20, &hops),
+        Coverage::Complete(BTreeSet::from([7, 9]))
+    );
+    assert_eq!(
+        nexthops::members(10, &hops),
+        Coverage::Complete(BTreeSet::from([7]))
+    );
+    hops.insert(
+        11,
+        nexthops::Hop::Device {
+            index: 9,
+            usable: false,
+        },
+    );
+    assert_eq!(
+        nexthops::members(20, &hops),
+        Coverage::Complete(BTreeSet::from([7]))
+    );
+    assert_eq!(
+        nexthops::members(11, &hops),
+        Coverage::Complete(BTreeSet::new())
+    );
+}
+
+#[test]
+fn linux_nexthops_missing_unsupported_and_cycles_preserve_known_members() {
+    use nexthops::Hop;
+    let mut hops = hop_fixtures();
+    hops.insert(20, Hop::Group(vec![10, 404, 11]));
+    assert_eq!(
+        nexthops::members(20, &hops),
+        Coverage::Incomplete {
+            value: BTreeSet::from([7, 9]),
+            reason: "missing nexthop ID 404".into()
+        }
+    );
+    hops.insert(20, Hop::Group(vec![10, 21]));
+    hops.insert(21, Hop::Group(vec![11, 20]));
+    assert_eq!(
+        nexthops::members(20, &hops),
+        Coverage::Incomplete {
+            value: BTreeSet::from([7, 9]),
+            reason: "nexthop cycle at ID 20".into()
+        }
+    );
+    hops.insert(21, Hop::Unsupported);
+    assert_eq!(
+        nexthops::members(20, &hops),
+        Coverage::Incomplete {
+            value: BTreeSet::from([7]),
+            reason: "unsupported nexthop ID 21".into()
+        }
+    );
+    // Shared subgroups are not cycles and must not create spurious warnings.
+    hops.insert(20, Hop::Group(vec![21, 22]));
+    hops.insert(21, Hop::Group(vec![10, 11]));
+    hops.insert(22, Hop::Group(vec![10, 11]));
+    assert_eq!(
+        nexthops::members(20, &hops),
+        Coverage::Complete(BTreeSet::from([7, 9]))
+    );
+}
+
+#[test]
+fn linux_nexthops_depth_16_and_visited_4096_limits_are_explicit() {
+    use nexthops::Hop;
+    let mut hops = BTreeMap::new();
+    for id in 1..16 {
+        hops.insert(id, Hop::Group(vec![id + 1]));
+    }
+    hops.insert(
+        16,
+        Hop::Device {
+            index: 7,
+            usable: true,
+        },
+    );
+    assert_eq!(
+        nexthops::members(1, &hops),
+        Coverage::Complete(BTreeSet::from([7]))
+    );
+    hops.insert(16, Hop::Group(vec![17]));
+    hops.insert(
+        17,
+        Hop::Device {
+            index: 9,
+            usable: true,
+        },
+    );
+    hops.insert(1, Hop::Group(vec![100, 2]));
+    hops.insert(
+        100,
+        Hop::Device {
+            index: 7,
+            usable: true,
+        },
+    );
+    assert_eq!(
+        nexthops::members(1, &hops),
+        Coverage::Incomplete {
+            value: BTreeSet::from([7]),
+            reason: "nexthop depth limit (16) reached".into()
+        }
+    );
+
+    let mut hops = BTreeMap::from([(1, Hop::Group((2..=4096).collect()))]);
+    for id in 2..=4096 {
+        hops.insert(
+            id,
+            Hop::Device {
+                index: 7,
+                usable: true,
+            },
+        );
+    }
+    assert_eq!(
+        nexthops::members(1, &hops),
+        Coverage::Complete(BTreeSet::from([7]))
+    );
+    hops.insert(1, Hop::Group((2..=4097).collect()));
+    hops.insert(
+        4097,
+        Hop::Device {
+            index: 9,
+            usable: true,
+        },
+    );
+    assert_eq!(
+        nexthops::members(1, &hops),
+        Coverage::Incomplete {
+            value: BTreeSet::from([7]),
+            reason: "nexthop visited-ID limit (4096) reached".into()
+        }
+    );
+}
+
+#[test]
+fn linux_nexthops_wire_flat_mpath_resilient_groups_and_flags() {
+    let mut bytes = nh_object(2, 0, 10, &attr(5, &7_u32.to_ne_bytes()));
+    bytes.extend(nh_object(10, 0, 11, &attr(5, &9_u32.to_ne_bytes())));
+    bytes.extend(nh_object(0, 0, 20, &nh_group(&[10, 11])));
+    let mut resilient = nh_group(&[10, 11]);
+    resilient.extend(attr(3, &1_u16.to_ne_bytes()));
+    resilient.extend(attr(12 | 0x8000, &attr(1, &64_u16.to_ne_bytes())));
+    resilient.extend(attr(6000, &[0xff]));
+    bytes.extend(nh_object(0, 0, 21, &resilient));
+    bytes.extend(nh_object(2, 1, 30, &attr(5, &17_u32.to_ne_bytes())));
+    bytes.extend(nh_object(10, 16, 31, &attr(5, &19_u32.to_ne_bytes())));
+    bytes.extend(nh_object(0, 0, 32, &attr(4, &[]))); // Blackhole is known nonforwarding.
+    let Coverage::Complete(hops) = nexthops::decode(&bytes) else {
+        panic!("valid UAPI dump must decode");
+    };
+    assert_eq!(
+        nexthops::members(20, &hops),
+        Coverage::Complete(BTreeSet::from([7, 9]))
+    );
+    assert_eq!(
+        nexthops::members(21, &hops),
+        Coverage::Complete(BTreeSet::from([7, 9]))
+    );
+    for id in [30, 31, 32] {
+        assert_eq!(
+            nexthops::members(id, &hops),
+            Coverage::Complete(BTreeSet::new())
+        );
+    }
+}
+
+#[test]
+fn linux_nexthops_malformed_arrays_keep_known_ids_with_incomplete_warning() {
+    let mut bytes = nh_object(2, 0, 10, &attr(5, &7_u32.to_ne_bytes()));
+    let mut group = 10_u32.to_ne_bytes().to_vec();
+    group.extend([0, 0, 0, 0, 0xff]); // One complete eight-byte entry + malformed tail.
+    bytes.extend(nh_object(0, 0, 20, &attr(2, &group)));
+    let Coverage::Incomplete {
+        value: hops,
+        reason,
+    } = nexthops::decode(&bytes)
+    else {
+        panic!("malformed array must be explicit");
+    };
+    assert_eq!(reason, "malformed nexthop group 20 array");
+    assert_eq!(
+        nexthops::members(20, &hops),
+        Coverage::Complete(BTreeSet::from([7]))
+    );
+    let result = super::defaults_with(|kind, payload| match (kind, payload[0]) {
+        (26, 2) => Ok(route(2, 0, 254, 1, &attr(30, &20_u32.to_ne_bytes()))),
+        (26, 10) => Ok(Vec::new()),
+        (106, 0) => Ok(bytes.clone()),
+        _ => panic!("unexpected dump"),
+    });
+    assert_eq!(
+        result.v4,
+        Coverage::Incomplete {
+            value: BTreeSet::from([7]),
+            reason: "nexthop dump: malformed nexthop group 20 array".into()
+        }
+    );
+    assert_eq!(result.v6, Coverage::Complete(BTreeSet::new()));
+}
+
+#[test]
+fn linux_nexthops_malformed_objects_and_unsupported_objects_cannot_disappear() {
+    let valid = nh_object(2, 0, 10, &attr(5, &7_u32.to_ne_bytes()));
+    for bad in [
+        message(104, 7, &[0; 7]),
+        nh_object(2, 0, 11, &attr(5, &[9; 3])),
+        nh_object(0, 0, 20, &attr(2, &[])),
+        nh_object(0, 0, 20, &attr(3, &[1])),
+        nh_object(2, 0, 0, &attr(5, &9_u32.to_ne_bytes())),
+        message(104, 7, &[2, 0, 4, 0, 0, 0, 0, 0, 3, 0, 1, 0]),
+        vec![0; 15],
+    ] {
+        let mut bytes = valid.clone();
+        bytes.extend(&bad);
+        assert!(
+            matches!(nexthops::decode(&bytes), Coverage::Incomplete { value, reason } if value.get(&10) == Some(&nexthops::Hop::Device { index: 7, usable: true }) && !reason.is_empty()),
+            "bad object: {bad:?}"
+        );
+    }
+    let mut unknown_group = nh_group(&[10]);
+    unknown_group.extend(attr(3, &2_u16.to_ne_bytes()));
+    for object in [
+        nh_object(0, 0, 20, &unknown_group),
+        nh_object(99, 0, 20, &attr(5, &9_u32.to_ne_bytes())),
+        nh_object(0, 0, 20, &attr(11, &[])),
+        nh_object(2, 0, 20, &[]),
+    ] {
+        let hops = match nexthops::decode(&object) {
+            Coverage::Complete(hops) | Coverage::Incomplete { value: hops, .. } => hops,
+            Coverage::Unavailable(reason) => panic!("unexpected {reason}"),
+        };
+        assert_eq!(
+            nexthops::members(20, &hops),
+            Coverage::Incomplete {
+                value: BTreeSet::new(),
+                reason: "unsupported nexthop ID 20".into()
+            }
+        );
+    }
+}
+
+#[test]
+fn linux_nexthops_routes_resolve_ids_and_preserve_direct_members_on_missing_ids() {
+    let mut bytes = route(2, 0, 254, 1, &attr(4, &2_u32.to_ne_bytes()));
+    bytes.extend(route(2, 0, 100, 1, &attr(30, &20_u32.to_ne_bytes())));
+    assert_eq!(
+        routes::decode(&bytes, &hop_fixtures()),
+        Coverage::Complete(BTreeSet::from([2, 7, 9]))
+    );
+    assert_eq!(
+        routes::decode(&bytes, &BTreeMap::new()),
+        Coverage::Incomplete {
+            value: BTreeSet::from([2]),
+            reason: "missing nexthop ID 20".into()
+        }
+    );
+}
+
+#[test]
+fn linux_nexthops_query_uses_unfiltered_unspec_object_dump_only_when_referenced() {
+    let mut calls = Vec::new();
+    let mut objects = nh_object(2, 0, 10, &attr(5, &7_u32.to_ne_bytes()));
+    objects.extend(nh_object(10, 0, 11, &attr(5, &9_u32.to_ne_bytes())));
+    objects.extend(nh_object(0, 0, 20, &nh_group(&[10, 11])));
+    let result = super::defaults_with(|kind, payload| {
+        calls.push((kind, payload.to_vec()));
+        match (kind, payload[0]) {
+            (26, 2) | (26, 10) => Ok(route(
+                payload[0],
+                0,
+                100,
+                1,
+                &attr(30, &20_u32.to_ne_bytes()),
+            )),
+            (106, 0) => Ok(objects.clone()),
+            _ => panic!("unexpected dump"),
+        }
+    });
+    assert_eq!(
+        calls,
+        vec![
+            (26, vec![2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+            (26, vec![10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+            (106, vec![0; 8])
+        ]
+    );
+    assert_eq!(result.v4, Coverage::Complete(BTreeSet::from([7, 9])));
+    assert_eq!(result.v6, Coverage::Complete(BTreeSet::from([7, 9])));
+
+    // Nondefault and nonforwarding routes must not trigger optional dumps.
+    let mut ignored = route(2, 24, 254, 1, &attr(30, &20_u32.to_ne_bytes()));
+    ignored.extend(route(2, 0, 254, 6, &attr(30, &20_u32.to_ne_bytes())));
+    let result = super::defaults_with(|kind, _| {
+        assert_eq!(kind, 26);
+        Ok(ignored.clone())
+    });
+    assert_eq!(result.v4, Coverage::Complete(BTreeSet::new()));
+    assert_eq!(result.v6, Coverage::Complete(BTreeSet::new()));
+}
+
+#[test]
+fn linux_nexthops_unavailable_object_dump_is_explicit_only_for_affected_family() {
+    let mut v4 = route(2, 0, 254, 1, &attr(4, &2_u32.to_ne_bytes()));
+    v4.extend(route(2, 0, 100, 1, &attr(30, &20_u32.to_ne_bytes())));
+    let result = super::defaults_with(|kind, payload| match (kind, payload[0]) {
+        (26, 2) => Ok(v4.clone()),
+        (26, 10) => Ok(route(10, 0, 254, 1, &attr(4, &9_u32.to_ne_bytes()))),
+        (106, 0) => Err(CollectError("not supported".into())),
+        _ => panic!("unexpected dump"),
+    });
+    assert_eq!(
+        result.v4,
+        Coverage::Incomplete {
+            value: BTreeSet::from([2]),
+            reason: "missing nexthop ID 20; nexthop dump: not supported".into()
+        }
+    );
+    assert_eq!(result.v6, Coverage::Complete(BTreeSet::from([9])));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_routes_native_defaults() {
+    let result = super::defaults();
+    for (family, coverage) in [("IPv4", result.v4), ("IPv6", result.v6)] {
+        eprintln!("native default membership {family}: {coverage:?}");
+        match coverage {
+            Coverage::Complete(indices) => assert!(indices.iter().all(|index| *index > 0)),
+            Coverage::Incomplete { reason, .. } | Coverage::Unavailable(reason) => {
+                panic!("native {family} discovery was not complete: {reason}");
+            }
+        }
+    }
 }
