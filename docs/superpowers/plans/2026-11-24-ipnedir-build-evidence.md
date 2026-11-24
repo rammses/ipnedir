@@ -14,7 +14,7 @@
 ## Required gates still pending
 
 - Task1 complete after fresh spec/quality approval; one documented nonblocking diagnostic deferred to Task6/final review.
-- Task2 complete; Task3 independently checked candidate below, fresh review pending. Tasks4–7 not started.
+- Tasks1–3 complete; Task4 independently checked local candidate below, fresh review pending. Tasks5–7 not started.
 - Task8 actual macOS/ARM/native four-target evidence: unproved, not waived.
 - Task9 archive/formula/release preparation and separately authorized publication/Homebrew evidence: not started.
 - Whole-change independent review/final acceptance: pending.
@@ -63,3 +63,18 @@
 - Builder independently ran fmt (exit0), complete workspace/all-target tests (**61 passed**,0 failed/ignored), Clippy -D warnings (exit0, existing unused-ureq Cargo diagnostic only), whitespace check, and inspected route/group source plus worker verification against acceptance.
 - Worker resolved one new intermediate `chunks_exact_to_as_chunks` lint by using `as_chunks::<8>()`, retaining malformed remainder checks; no suppression or policy change. No new failing final gate.
 - Full source/RED/GREEN evidence: ignored `.superpowers/sdd/2026-11-24-ipnedir-implementation/task-3-report.md`. Fresh task review and acceptance pending; macOS/ARM/syscall-trace/application/release gates not claimed passed.
+
+### Task3 acceptance
+
+- Commit `992cc7eaf114e5ed2ab2028d4e5cb05807b245ee`, base `1c633b646b01af5a72854875ca55f6a808c55892`; required package `review-1c633b6..992cc7e.diff`.
+- Fresh capable combined Reviewer `ses_df0e3c16fffeZt9Rmh2f4ZD8zg`: Spec compliant, quality Approved first pass; no new findings/fix loop. Existing unused-ureq diagnostic still assigned Task6/final.
+- Reviewer checked complete diff/report and focused unchanged framing/UAPI risks; no suite rerun. Later macOS/ARM/filetrace/app/release items are tracked owning gates (7/8/9), not current success claims. Task3 complete; Tasks4–9 pending.
+
+## Task4 — candidate Darwin inventory/media
+
+- Initial Task4 dispatch was user-interrupted during research only; recovery confirmed unchanged HEAD, no Darwin source/report, only existing Builder metadata. Replacement capable worker `ses_df0d9268bffe5iclO3FcMJBL8X` reused recorded ABI context rather than replaying Tasks1–3.
+- BASE `992cc7eaf114e5ed2ab2028d4e5cb05807b245ee`; allowed new Darwin mod/wire/inventory/media/tests and platform registration only. Model/dependency graph/Linux/source-plan/Builder metadata preserved.
+- Implements owned link-only/multi-IP/raw identity/scoped-address assembly, validated packed IFMIB64 per-interface samples, RAII getifaddrs cleanup, conservative media state/recognized driver speeds and target-gated native FFI/layout assertions. No routes yet, CoreWLAN, nominal baudrate or32-bit counter fallback.
+- Worker behavioral RED:12 inventory failures and4 media failures (two preexisting-unavailable/layout cases passed); later targeted multicast scope regression RED then fix. GREEN13 inventory+6 media tests. Report `.superpowers/sdd/2026-11-24-ipnedir-implementation/task-4-report.md` records source citations, exact output and ownership/safety audit.
+- Builder independently ran fmt (exit0), complete workspace/all-target tests (**80 passed**,0 failed/ignored), Clippy -D warnings (exit0, unchanged unused-ureq Cargo warning), whitespace check and inspected wire/native ownership/media sources against the approved local acceptance.
+- Actual Darwin FFI **not compiled/linked/run** here; target SDK/layout/runtime checks and three native-only tests remain mandatory Task8 for both Darwin targets. Linux portable tests do not establish macOS support. Fresh local task review/acceptance pending.
