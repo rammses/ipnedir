@@ -1,14 +1,15 @@
 use std::{
     cell::Cell,
+    collections::{BTreeSet, VecDeque},
     mem::{align_of, offset_of, size_of},
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     rc::Rc,
     time::Instant,
 };
 
-use crate::model::{Address, InterfaceId, State};
+use crate::model::{Address, Coverage, Family, InterfaceId, State};
 
-use super::{inventory, media, wire};
+use super::{inventory, media, routes, wire};
 
 fn ifmib() -> Vec<u8> {
     let mut bytes = vec![0; 180];
@@ -61,6 +62,680 @@ fn entry(name: &[u8], index: u32, flags: u32, address: Option<Vec<u8>>) -> inven
         flags,
         address,
         netmask: None,
+    }
+}
+
+// Literal Darwin DUMP/GET layout, independent of the decoder/stride helpers.
+// Changing the header size, field offsets, RTAX order or ROUNDUP32 breaks the
+// memberships below, not just an assertion about the fixture's own structure.
+fn route(index: u16, flags: u32, addresses: &[(u8, Vec<u8>)]) -> Vec<u8> {
+    let mut bytes = vec![0; 92];
+    bytes[2] = 5;
+    bytes[3] = 4;
+    bytes[4..6].copy_from_slice(&index.to_ne_bytes());
+    bytes[8..12].copy_from_slice(&flags.to_ne_bytes());
+    let mut bitmap = 0_u32;
+    let mut previous = None;
+    for (slot, address) in addresses {
+        assert!(previous.is_none_or(|last| last < *slot));
+        previous = Some(*slot);
+        bitmap |= 1 << slot;
+        bytes.extend_from_slice(address);
+        while !bytes.len().is_multiple_of(4) {
+            bytes.push(0);
+        }
+    }
+    bytes[12..16].copy_from_slice(&bitmap.to_ne_bytes());
+    let len = u16::try_from(bytes.len()).unwrap();
+    bytes[..2].copy_from_slice(&len.to_ne_bytes());
+    bytes
+}
+
+fn route_v4(index: u16) -> Vec<u8> {
+    route(index, 1, &[(0, v4([0; 4])), (2, vec![0; 4])])
+}
+
+fn route_v6(index: u16) -> Vec<u8> {
+    route(index, 1, &[(0, v6([0; 16], 0)), (2, vec![0; 4])])
+}
+
+fn route_incomplete(coverage: Coverage<BTreeSet<u32>>, expected: &[u32]) {
+    match coverage {
+        Coverage::Incomplete { value, reason } => {
+            assert_eq!(value, expected.iter().copied().collect());
+            assert!(!reason.is_empty());
+        }
+        other => panic!("expected incomplete {expected:?}, got {other:?}"),
+    }
+}
+
+#[test]
+fn darwin_routes_zero_length_sockaddr_advances_four_on_lp64() {
+    assert_eq!(wire::sockaddr_stride(0), Some(4));
+    assert_eq!(wire::sockaddr_stride(1), Some(4));
+    assert_eq!(wire::sockaddr_stride(4), Some(4));
+    assert_eq!(wire::sockaddr_stride(5), Some(8));
+    assert_eq!(wire::sockaddr_stride(usize::MAX - 3), Some(usize::MAX - 3));
+    assert_eq!(wire::sockaddr_stride(usize::MAX), None);
+}
+
+#[test]
+fn darwin_routes_v4_preserves_all_scoped_and_gateway_free_defaults() {
+    let mut bytes = route(
+        4,
+        3,
+        &[(0, v4([0; 4])), (1, v4([192, 0, 2, 1])), (2, vec![0; 4])],
+    );
+    bytes.extend(route(
+        19,
+        0x0100_0001,
+        &[(0, v4([0; 4])), (2, vec![4, 0, 0, 0])],
+    ));
+    bytes.extend(route_v4(4));
+    assert_eq!(
+        routes::decode(&bytes, Family::V4),
+        Coverage::Complete(BTreeSet::from([4, 19]))
+    );
+}
+
+#[test]
+fn darwin_routes_v6_preserves_scoped_and_point_to_point_defaults() {
+    let mut gateway = [0; 16];
+    gateway[..2].copy_from_slice(&[0xfe, 0x80]);
+    gateway[15] = 1;
+    let mut bytes = route(
+        4,
+        0x0100_0003,
+        &[(0, v6([0; 16], 4)), (1, v6(gateway, 4)), (2, vec![0; 4])],
+    );
+    bytes.extend(route(
+        19,
+        0x0100_0001,
+        &[(0, v6([0; 16], 19)), (2, vec![8, 0, 0, 0, 0, 0, 0, 0])],
+    ));
+    assert_eq!(
+        routes::decode(&bytes, Family::V6),
+        Coverage::Complete(BTreeSet::from([4, 19]))
+    );
+}
+
+#[test]
+fn darwin_routes_bitmap_order_advances_past_zero_masks_and_odd_link_extents() {
+    let bytes = route(
+        0,
+        1,
+        &[
+            (0, v4([0; 4])),
+            (1, v4([192, 0, 2, 1])),
+            (2, vec![0; 4]),
+            (3, vec![0; 4]),
+            (4, link(b"en0", 23, &[])),
+            (5, v4([192, 0, 2, 9])),
+            (6, v4([192, 0, 2, 2])),
+            (7, v4([192, 0, 2, 10])),
+        ],
+    );
+    assert_eq!(
+        routes::decode(&bytes, Family::V4),
+        Coverage::Complete(BTreeSet::from([23]))
+    );
+}
+
+#[test]
+fn darwin_routes_direct_link_gateway_can_supply_the_interface() {
+    let bytes = route(
+        0,
+        1,
+        &[
+            (0, v6([0; 16], 0)),
+            (1, link(b"utun2", 29, &[])),
+            (2, vec![0; 4]),
+        ],
+    );
+    assert_eq!(
+        routes::decode(&bytes, Family::V6),
+        Coverage::Complete(BTreeSet::from([29]))
+    );
+}
+
+#[test]
+fn darwin_routes_gateway_next_hop_index_is_not_an_egress_fallback() {
+    let addresses = [(0, v4([0; 4])), (1, link(b"", 99, &[])), (2, vec![0; 4])];
+    assert_eq!(
+        routes::decode(&route(4, 3, &addresses), Family::V4),
+        Coverage::Complete(BTreeSet::from([4]))
+    );
+    route_incomplete(routes::decode(&route(0, 3, &addresses), Family::V4), &[]);
+    route_incomplete(routes::decode(&route_v4(0), Family::V4), &[]);
+    let mut gateway = [0; 16];
+    gateway[..2].copy_from_slice(&[0xfe, 0x80]);
+    gateway[15] = 1;
+    route_incomplete(
+        routes::decode(
+            &route(
+                0,
+                3,
+                &[(0, v6([0; 16], 0)), (1, v6(gateway, 27)), (2, vec![0; 4])],
+            ),
+            Family::V6,
+        ),
+        &[],
+    );
+}
+
+#[test]
+fn darwin_routes_conflicting_or_malformed_link_identity_is_incomplete() {
+    let mut bad_link = link(b"en0", 4, &[]);
+    bad_link[6] = 255;
+    for ifp in [link(b"en0", 19, &[]), bad_link, vec![2, 18], v4([0; 4])] {
+        route_incomplete(
+            routes::decode(
+                &route(4, 1, &[(0, v4([0; 4])), (2, vec![0; 4]), (4, ifp)]),
+                Family::V4,
+            ),
+            &[],
+        );
+    }
+}
+
+#[test]
+fn darwin_routes_short_masks_keep_their_actual_nondefault_prefix_bits() {
+    for mask in [vec![5, 0, 0, 0, 0xff], vec![8, 2, 0, 0, 0xff, 0xff, 0, 0]] {
+        assert_eq!(
+            routes::decode(&route(4, 1, &[(0, v4([0; 4])), (2, mask)]), Family::V4),
+            Coverage::Complete(BTreeSet::new())
+        );
+    }
+    assert_eq!(
+        routes::decode(
+            &route(
+                4,
+                1,
+                &[(0, v6([0; 16], 0)), (2, vec![9, 0, 0, 0, 0, 0, 0, 0, 0x80])]
+            ),
+            Family::V6,
+        ),
+        Coverage::Complete(BTreeSet::new())
+    );
+    for mask in [vec![2, 0], vec![4, 2, 0, 0], v4([0; 4])] {
+        assert_eq!(
+            routes::decode(&route(4, 1, &[(0, v4([0; 4])), (2, mask)]), Family::V4),
+            Coverage::Complete(BTreeSet::from([4]))
+        );
+    }
+}
+
+#[test]
+fn darwin_routes_nondefault_destinations_and_host_routes_are_not_defaults() {
+    let mut bytes = route(4, 1, &[(0, v4([192, 0, 2, 0])), (2, vec![0; 4])]);
+    bytes.extend(route(19, 5, &[(0, v4([0; 4]))]));
+    assert_eq!(
+        routes::decode(&bytes, Family::V4),
+        Coverage::Complete(BTreeSet::new())
+    );
+    let mut ip = [0; 16];
+    ip[0] = 0x20;
+    assert_eq!(
+        routes::decode(&route(4, 1, &[(0, v6(ip, 0)), (2, vec![0; 4])]), Family::V6),
+        Coverage::Complete(BTreeSet::new())
+    );
+}
+
+#[test]
+fn darwin_routes_nonforwarding_dead_reject_blackhole_and_down_are_excluded() {
+    let mut bytes = Vec::new();
+    for flags in [
+        0,
+        9,
+        0x1001,
+        0x2000_0001,
+        0x0200_0001,
+        0x0020_0001,
+        0x0040_0001,
+        0x0080_0001,
+    ] {
+        bytes.extend(route(19, flags, &[(0, v4([0; 4])), (2, vec![0; 4])]));
+    }
+    bytes.extend(route_v4(4));
+    assert_eq!(
+        routes::decode(&bytes, Family::V4),
+        Coverage::Complete(BTreeSet::from([4]))
+    );
+}
+
+#[test]
+fn darwin_routes_malformed_masks_cannot_become_complete_empty_or_defaults() {
+    for mask in [vec![5, 0, 0, 0, 0x81], vec![4, 30, 0, 0], vec![17; 17]] {
+        route_incomplete(
+            routes::decode(&route(4, 1, &[(0, v4([0; 4])), (2, mask)]), Family::V4),
+            &[],
+        );
+    }
+    route_incomplete(
+        routes::decode(&route(4, 1, &[(0, v4([0; 4]))]), Family::V4),
+        &[],
+    );
+}
+
+#[test]
+fn darwin_routes_wrong_family_is_visible_and_does_not_cross_pollinate() {
+    let mut bytes = route_v4(4);
+    bytes.extend(route_v6(19));
+    route_incomplete(routes::decode(&bytes, Family::V4), &[4]);
+    route_incomplete(routes::decode(&bytes, Family::V6), &[19]);
+}
+
+#[test]
+fn darwin_routes_bad_version_get2_errno_and_bitmap_preserve_other_records_only() {
+    let good = route_v4(4);
+    let mut malformed = Vec::new();
+    let mut version = route_v4(99);
+    version[2] = 4;
+    malformed.push(version);
+    for kind in [1, 0x0e, 0x14] {
+        let mut bytes = route_v4(99);
+        bytes[3] = kind;
+        malformed.push(bytes);
+    }
+    let mut failed = route_v4(99);
+    failed[24..28].copy_from_slice(&5_i32.to_ne_bytes());
+    malformed.push(failed);
+    let mut bitmap = route_v4(99);
+    bitmap[12..16].copy_from_slice(&0x105_u32.to_ne_bytes());
+    malformed.push(bitmap);
+    malformed.push(route(99, 1, &[(2, vec![0; 4])]));
+    for bad in malformed {
+        let bytes = [good.clone(), bad, route_v4(19)].concat();
+        route_incomplete(routes::decode(&bytes, Family::V4), &[4, 19]);
+    }
+}
+
+#[test]
+fn darwin_routes_short_headers_impossible_msglen_and_all_truncations_are_visible() {
+    let good = route_v4(4);
+    for end in 1..good.len() {
+        route_incomplete(routes::decode(&good[..end], Family::V4), &[]);
+    }
+    for len in [0_u16, 4, 91, u16::MAX] {
+        let mut bad = good.clone();
+        bad[..2].copy_from_slice(&len.to_ne_bytes());
+        route_incomplete(
+            routes::decode(&[good.clone(), bad].concat(), Family::V4),
+            &[4],
+        );
+    }
+    assert_eq!(
+        routes::decode(&[], Family::V4),
+        Coverage::Complete(BTreeSet::new())
+    );
+}
+
+#[test]
+fn darwin_routes_sockaddr_lengths_padding_and_unclaimed_payload_are_checked() {
+    for address in [
+        vec![0; 4],
+        vec![1, 2, 0, 0],
+        vec![7, 2, 0, 0, 0, 0, 0],
+        vec![255, 2, 0, 0],
+    ] {
+        route_incomplete(
+            routes::decode(&route(4, 1, &[(0, address), (2, vec![0; 4])]), Family::V4),
+            &[],
+        );
+    }
+    let mut no_padding = route(4, 1, &[(0, v4([0; 4])), (2, vec![5, 0, 0, 0, 0])]);
+    no_padding.truncate(113);
+    no_padding[..2].copy_from_slice(&113_u16.to_ne_bytes());
+    route_incomplete(routes::decode(&no_padding, Family::V4), &[]);
+    let mut extra = route_v4(4);
+    extra.extend_from_slice(&[0; 4]);
+    extra[..2].copy_from_slice(&116_u16.to_ne_bytes());
+    route_incomplete(routes::decode(&extra, Family::V4), &[]);
+    route_incomplete(
+        routes::decode(
+            &route(4, 1, &[(0, v4([0; 4])), (1, vec![0; 4]), (2, vec![0; 4])]),
+            Family::V4,
+        ),
+        &[],
+    );
+}
+
+struct RouteQueryStep {
+    mib: [i32; 6],
+    capacity: Option<usize>,
+    bytes: Vec<u8>,
+    result: routes::QueryResult,
+}
+
+struct RouteQuery(VecDeque<RouteQueryStep>);
+
+impl RouteQuery {
+    fn call(&mut self, mib: &[i32; 6], out: Option<&mut [u8]>) -> routes::QueryResult {
+        let step = self.0.pop_front().expect("unexpected extra sysctl call");
+        assert_eq!(
+            *mib, step.mib,
+            "collector must request a per-family DUMP, not DUMP2 or a setter"
+        );
+        assert_eq!(out.as_ref().map(|bytes| bytes.len()), step.capacity);
+        if let Some(out) = out {
+            out[..step.bytes.len()].copy_from_slice(&step.bytes);
+        } else {
+            assert!(step.bytes.is_empty());
+        }
+        step.result
+    }
+
+    fn collect(&mut self, family: Family) -> Coverage<BTreeSet<u32>> {
+        let result = routes::collect_with(family, &mut |mib, out| self.call(mib, out));
+        assert!(self.0.is_empty(), "collector skipped required sysctl calls");
+        result
+    }
+}
+
+fn route_size(family: i32, result: routes::QueryResult) -> RouteQueryStep {
+    RouteQueryStep {
+        mib: [4, 17, 0, family, 1, 0],
+        capacity: None,
+        bytes: vec![],
+        result,
+    }
+}
+
+fn route_data(
+    family: i32,
+    capacity: usize,
+    bytes: Vec<u8>,
+    result: routes::QueryResult,
+) -> RouteQueryStep {
+    RouteQueryStep {
+        mib: [4, 17, 0, family, 1, 0],
+        capacity: Some(capacity),
+        bytes,
+        result,
+    }
+}
+
+#[test]
+fn darwin_routes_query_separate_family_mibs_return_owned_independent_coverage() {
+    let bytes = route_v4(4);
+    let mut query = RouteQuery(VecDeque::from([
+        route_size(2, routes::QueryResult::Success(512)),
+        route_data(2, 512, bytes, routes::QueryResult::Success(112)),
+        route_size(30, routes::QueryResult::Failed("denied".into())),
+    ]));
+    let defaults = routes::defaults_with(|mib, out| query.call(mib, out));
+    assert!(query.0.is_empty());
+    drop(query);
+    assert_eq!(defaults.v4, Coverage::Complete(BTreeSet::from([4])));
+    assert!(matches!(defaults.v6, Coverage::Unavailable(reason) if !reason.is_empty()));
+}
+
+#[test]
+fn darwin_routes_query_successful_empty_size_is_complete_without_data_query() {
+    let mut query = RouteQuery(VecDeque::from([route_size(
+        30,
+        routes::QueryResult::Success(0),
+    )]));
+    assert_eq!(
+        query.collect(Family::V6),
+        Coverage::Complete(BTreeSet::new())
+    );
+}
+
+#[test]
+fn darwin_routes_query_errors_never_turn_into_complete_empty_or_trust_failed_bytes() {
+    let scripts = [
+        VecDeque::from([route_size(2, routes::QueryResult::Failed("denied".into()))]),
+        VecDeque::from([
+            route_size(2, routes::QueryResult::Success(112)),
+            route_data(
+                2,
+                112,
+                route_v4(99),
+                routes::QueryResult::Failed("I/O error".into()),
+            ),
+        ]),
+    ];
+    for steps in scripts {
+        assert!(
+            matches!(RouteQuery(steps).collect(Family::V4), Coverage::Unavailable(reason) if !reason.is_empty())
+        );
+    }
+}
+
+#[test]
+fn darwin_routes_query_growth_restarts_size_and_success_replaces_old_partial_members() {
+    let mut query = RouteQuery(VecDeque::from([
+        route_size(2, routes::QueryResult::Success(112)),
+        route_data(2, 112, route_v4(4), routes::QueryResult::NoMemory(112)),
+        route_size(2, routes::QueryResult::Success(224)),
+        route_data(2, 224, route_v4(19), routes::QueryResult::Success(112)),
+    ]));
+    assert_eq!(
+        query.collect(Family::V4),
+        Coverage::Complete(BTreeSet::from([19]))
+    );
+}
+
+#[test]
+fn darwin_routes_query_growth_exhausts_three_attempts_and_keeps_only_valid_records() {
+    let mut steps = VecDeque::new();
+    for index in [4, 19, 4] {
+        steps.push_back(route_size(2, routes::QueryResult::Success(120)));
+        let bytes = [route_v4(index), vec![0xff; 8]].concat();
+        steps.push_back(route_data(
+            2,
+            120,
+            bytes,
+            routes::QueryResult::NoMemory(120),
+        ));
+    }
+    route_incomplete(RouteQuery(steps).collect(Family::V4), &[4, 19]);
+}
+
+#[test]
+fn darwin_routes_query_later_size_failure_retains_valid_partial_members_with_warning() {
+    let mut query = RouteQuery(VecDeque::from([
+        route_size(30, routes::QueryResult::Success(124)),
+        route_data(30, 124, route_v6(19), routes::QueryResult::NoMemory(124)),
+        route_size(30, routes::QueryResult::Failed("table unavailable".into())),
+    ]));
+    route_incomplete(query.collect(Family::V6), &[19]);
+}
+
+#[test]
+fn darwin_routes_query_zero_length_enomem_is_never_a_complete_empty_dump() {
+    for size_query in [false, true] {
+        let mut steps = VecDeque::new();
+        for _ in 0..3 {
+            if size_query {
+                steps.push_back(route_size(2, routes::QueryResult::NoMemory(0)));
+            } else {
+                steps.push_back(route_size(2, routes::QueryResult::Success(112)));
+                steps.push_back(route_data(2, 112, vec![], routes::QueryResult::NoMemory(0)));
+            }
+        }
+        assert!(
+            matches!(RouteQuery(steps).collect(Family::V4), Coverage::Unavailable(reason) if !reason.is_empty())
+        );
+    }
+}
+
+#[test]
+fn darwin_routes_query_caps_allocation_at_sixteen_mib_without_narrowing() {
+    for size in [16 * 1024 * 1024 + 1, usize::MAX] {
+        let mut query = RouteQuery(VecDeque::from([route_size(
+            2,
+            routes::QueryResult::Success(size),
+        )]));
+        assert!(
+            matches!(query.collect(Family::V4), Coverage::Unavailable(reason) if !reason.is_empty())
+        );
+    }
+    let mut query = RouteQuery(VecDeque::from([
+        route_size(2, routes::QueryResult::Success(16 * 1024 * 1024)),
+        route_data(2, 16 * 1024 * 1024, vec![], routes::QueryResult::Success(0)),
+    ]));
+    assert_eq!(
+        query.collect(Family::V4),
+        Coverage::Complete(BTreeSet::new())
+    );
+}
+
+#[test]
+fn darwin_routes_query_oversized_returned_length_is_truncated_not_complete() {
+    let mut steps = VecDeque::new();
+    for _ in 0..3 {
+        steps.push_back(route_size(2, routes::QueryResult::Success(112)));
+        steps.push_back(route_data(
+            2,
+            112,
+            route_v4(4),
+            routes::QueryResult::Success(113),
+        ));
+    }
+    route_incomplete(RouteQuery(steps).collect(Family::V4), &[4]);
+}
+
+#[test]
+fn darwin_routes_query_success_with_malformed_tail_is_still_incomplete() {
+    let mut query = RouteQuery(VecDeque::from([
+        route_size(2, routes::QueryResult::Success(116)),
+        route_data(
+            2,
+            116,
+            [route_v4(4), vec![0xff; 4]].concat(),
+            routes::QueryResult::Success(116),
+        ),
+    ]));
+    route_incomplete(query.collect(Family::V4), &[4]);
+}
+
+#[test]
+fn darwin_routes_gateway_flag_without_a_next_hop_is_incomplete() {
+    route_incomplete(
+        routes::decode(
+            &route(4, 3, &[(0, v4([0; 4])), (2, vec![0; 4])]),
+            Family::V4,
+        ),
+        &[],
+    );
+}
+
+#[test]
+fn darwin_routes_masks_use_only_present_address_bits_not_stride_or_scope_bytes() {
+    let mut padded = route(4, 1, &[(0, v4([0; 4])), (2, vec![5, 0, 0, 0, 0])]);
+    padded[113..116].fill(0xff);
+    assert_eq!(
+        routes::decode(&padded, Family::V4),
+        Coverage::Complete(BTreeSet::from([4]))
+    );
+    let bytes = route(
+        19,
+        0x0100_0001,
+        &[(0, v6([0; 16], 19)), (2, v6([0; 16], u32::MAX))],
+    );
+    assert_eq!(
+        routes::decode(&bytes, Family::V6),
+        Coverage::Complete(BTreeSet::from([19]))
+    );
+}
+
+#[test]
+fn darwin_routes_query_ipv4_failure_does_not_prevent_ipv6_membership() {
+    let mut query = RouteQuery(VecDeque::from([
+        route_size(2, routes::QueryResult::Failed("no IPv4 table".into())),
+        route_size(30, routes::QueryResult::Success(124)),
+        route_data(30, 124, route_v6(19), routes::QueryResult::Success(124)),
+    ]));
+    let defaults = routes::defaults_with(|mib, out| query.call(mib, out));
+    assert!(query.0.is_empty());
+    assert!(matches!(defaults.v4, Coverage::Unavailable(reason) if !reason.is_empty()));
+    assert_eq!(defaults.v6, Coverage::Complete(BTreeSet::from([19])));
+}
+
+#[test]
+fn darwin_routes_query_third_attempt_can_succeed_with_a_new_complete_empty_dump() {
+    let mut query = RouteQuery(VecDeque::from([
+        route_size(2, routes::QueryResult::Success(112)),
+        route_data(2, 112, route_v4(4), routes::QueryResult::NoMemory(112)),
+        route_size(2, routes::QueryResult::Success(112)),
+        route_data(2, 112, route_v4(19), routes::QueryResult::NoMemory(112)),
+        route_size(2, routes::QueryResult::Success(0)),
+    ]));
+    assert_eq!(
+        query.collect(Family::V4),
+        Coverage::Complete(BTreeSet::new())
+    );
+}
+
+#[test]
+fn darwin_routes_query_later_data_error_retains_only_prior_valid_prefix() {
+    let mut query = RouteQuery(VecDeque::from([
+        route_size(2, routes::QueryResult::Success(112)),
+        route_data(2, 112, route_v4(4), routes::QueryResult::NoMemory(112)),
+        route_size(2, routes::QueryResult::Success(112)),
+        route_data(
+            2,
+            112,
+            route_v4(99),
+            routes::QueryResult::Failed("denied".into()),
+        ),
+    ]));
+    route_incomplete(query.collect(Family::V4), &[4]);
+}
+
+#[test]
+fn darwin_routes_query_reported_growth_over_limit_keeps_valid_members_with_warning() {
+    let mut query = RouteQuery(VecDeque::from([
+        route_size(2, routes::QueryResult::Success(112)),
+        route_data(
+            2,
+            112,
+            route_v4(4),
+            routes::QueryResult::NoMemory(16 * 1024 * 1024 + 1),
+        ),
+    ]));
+    route_incomplete(query.collect(Family::V4), &[4]);
+    let mut query = RouteQuery(VecDeque::from([route_size(
+        2,
+        routes::QueryResult::NoMemory(16 * 1024 * 1024 + 1),
+    )]));
+    assert!(
+        matches!(query.collect(Family::V4), Coverage::Unavailable(reason) if !reason.is_empty())
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn darwin_routes_native_get_header_and_link_layout_match_pinned_sources() {
+    assert_eq!(size_of::<libc::rt_msghdr>(), 92);
+    assert_eq!(align_of::<libc::rt_msghdr>(), 4);
+    assert_eq!(offset_of!(libc::rt_msghdr, rtm_index), 4);
+    assert_eq!(offset_of!(libc::rt_msghdr, rtm_flags), 8);
+    assert_eq!(offset_of!(libc::rt_msghdr, rtm_addrs), 12);
+    assert_eq!(offset_of!(libc::rt_msghdr, rtm_errno), 24);
+    assert_eq!(offset_of!(libc::rt_msghdr, rtm_rmx), 36);
+    assert_eq!(offset_of!(libc::sockaddr_dl, sdl_index), 2);
+    assert_eq!(offset_of!(libc::sockaddr_dl, sdl_data), 8);
+    assert_eq!(libc::RTM_VERSION, 5);
+    assert_eq!(libc::RTM_GET, 4);
+    assert_eq!(libc::RTM_GET2, 0x14);
+    assert_eq!(libc::RTAX_IFP, 4);
+    assert_eq!(libc::NET_RT_DUMP, 1);
+    assert_eq!(wire::sockaddr_stride(0), Some(4));
+    assert_eq!(wire::sockaddr_stride(5), Some(8));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn darwin_routes_native_read_only_defaults_have_explicit_per_family_coverage() {
+    let defaults = super::defaults();
+    for coverage in [defaults.v4, defaults.v6] {
+        match coverage {
+            Coverage::Complete(members) => assert!(members.iter().all(|index| *index != 0)),
+            other => panic!("native route dump did not complete: {other:?}"),
+        }
     }
 }
 

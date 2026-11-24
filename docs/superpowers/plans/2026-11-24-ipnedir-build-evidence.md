@@ -14,7 +14,7 @@
 ## Required gates still pending
 
 - Task1 complete after fresh spec/quality approval; one documented nonblocking diagnostic deferred to Task6/final review.
-- Tasks1–3 complete; Task4 independently checked local candidate below, fresh review pending. Tasks5–7 not started.
+- Tasks1–4 complete locally; Task5 independently checked local candidate below, fresh review pending. Tasks6–7 not started. Actual Darwin/native evidence remains Task8.
 - Task8 actual macOS/ARM/native four-target evidence: unproved, not waived.
 - Task9 archive/formula/release preparation and separately authorized publication/Homebrew evidence: not started.
 - Whole-change independent review/final acceptance: pending.
@@ -78,3 +78,17 @@
 - Worker behavioral RED:12 inventory failures and4 media failures (two preexisting-unavailable/layout cases passed); later targeted multicast scope regression RED then fix. GREEN13 inventory+6 media tests. Report `.superpowers/sdd/2026-11-24-ipnedir-implementation/task-4-report.md` records source citations, exact output and ownership/safety audit.
 - Builder independently ran fmt (exit0), complete workspace/all-target tests (**80 passed**,0 failed/ignored), Clippy -D warnings (exit0, unchanged unused-ureq Cargo warning), whitespace check and inspected wire/native ownership/media sources against the approved local acceptance.
 - Actual Darwin FFI **not compiled/linked/run** here; target SDK/layout/runtime checks and three native-only tests remain mandatory Task8 for both Darwin targets. Linux portable tests do not establish macOS support. Fresh local task review/acceptance pending.
+
+### Task4 local acceptance
+
+- Commit `08cdee35347a59d7ac037954469dc52a641fc0a7`, base `992cc7eaf114e5ed2ab2028d4e5cb05807b245ee`; required package `review-992cc7e..08cdee3.diff`.
+- Fresh capable Reviewer `ses_df0c532fdffepfIEEm9IO9IpBJ`: spec compliant for approved local acceptance, quality Approved first pass; no Critical/Important/new Minor findings, no fix loop. Source-level libc/XNU ABI checks do not replace selected-SDK/native evidence.
+- Builder resolves cannot-verify items by retaining actual Darwin compile/runtime and both architectures as mandatory Task8 gates; no current native success claim. Existing unused-ureq debt stays Task6/final. Task4 complete locally; Tasks5–9 pending.
+
+## Task5 — candidate Darwin default-route inventory
+
+- Fresh capable worker `ses_df0c01562ffeib38cwq0Oi5IIj`, BASE `08cdee35347a59d7ac037954469dc52a641fc0a7`. Only routes module, macOS route registration, shared checked stride helper and route tests changed; inventory/media/model/dependencies/Builder metadata preserved.
+- Portable DUMP/GET header and RTAX parsing covers scoped and gateway-free defaults, per-family default membership, zero/short masks with four-byte stride, usable interface identity and explicit malformed/partial coverage. Native read-only sysctl controller bounds3 attempts/16MiB, retains only validated partial records on growth/error and never advertises failure as complete empty.
+- Worker initial behavioral RED25 failures, later required-gateway semantic regression RED then fix; GREEN31 route tests,111 complete host tests. Exact source citations, RED/GREEN excerpts and sole new unsafe sysctl audit in `.superpowers/sdd/2026-11-24-ipnedir-implementation/task-5-report.md`.
+- Builder independently fmt exit0, full workspace/all-target tests **111 passed**,0 failed/ignored, Clippy -D warnings exit0 (only existing unused-ureq Cargo diagnostic), whitespace check; inspected actual route controller/parser and shared helper/registration diff.
+- Added two native-only route/layout smoke tests; actual selected-SDK/native compile/runtime/macARM checks not run here, remain Task8. Fresh local task review and acceptance pending; no platform/global readiness claim.

@@ -35,6 +35,16 @@ fn valid_ifmib(bytes: &[u8], expected_name: &[u8]) -> Option<()> {
     (name(bytes.get(..16)?)? == expected_name).then_some(())
 }
 
+/// Darwin routing messages use ROUNDUP32 even on LP64, including a four-byte
+/// slot for sa_len == 0. This is not alignment to the host's sizeof(long).
+pub(super) fn sockaddr_stride(length: usize) -> Option<usize> {
+    if length == 0 {
+        Some(4)
+    } else {
+        length.checked_add(3).map(|length| length & !3)
+    }
+}
+
 pub(super) fn prefix(mask: &[u8]) -> Option<u8> {
     if !matches!(mask.len(), 4 | 16) {
         return None;
