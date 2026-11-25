@@ -2,6 +2,7 @@ use std::{
     collections::BTreeSet,
     fs,
     io::Read,
+    os::{fd::AsRawFd, unix::process::CommandExt},
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
     sync::atomic::{AtomicU64, Ordering},
@@ -122,68 +123,142 @@ pub fn validate_archives(archives: &[Archive], version: &str) -> Result<(), Stri
     Ok(())
 }
 
-/// Every developer-tool subprocess has a wall-clock and stdout/stderr bound.
-/// No shell is used; children are killed and reaped on failure/timeout.
+// ABI checked against rust-lang/libc 0.2.191: src/unix/mod.rs (pid_t,
+// fcntl/kill), linux_like/mod.rs and bsd/apple/mod.rs (F_GETFL=3,
+// F_SETFL=4, SIGKILL=9), linux/gnu/b64/{x86_64,aarch64}/mod.rs
+// (O_NONBLOCK=2048), bsd/mod.rs (O_NONBLOCK=4). No libc dependency is added.
+unsafe extern "C" {
+    fn fcntl(fd: std::ffi::c_int, command: std::ffi::c_int, ...) -> std::ffi::c_int;
+    fn kill(pid: i32, signal: std::ffi::c_int) -> std::ffi::c_int;
+}
+
+fn nonblocking(pipe: &impl AsRawFd) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    const NONBLOCK: std::ffi::c_int = 2048;
+    #[cfg(target_os = "macos")]
+    const NONBLOCK: std::ffi::c_int = 4;
+    // SAFETY: pipe owns a live descriptor throughout both calls. F_GETFL has
+    // no vararg; F_SETFL takes exactly c_int and preserves all existing flags.
+    let flags = unsafe { fcntl(pipe.as_raw_fd(), 3) };
+    if flags < 0 || unsafe { fcntl(pipe.as_raw_fd(), 4, flags | NONBLOCK) } < 0 {
+        return Err(format!(
+            "nonblocking pipe: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+/// One deadline covers child execution AND both pipe EOFs. No shell or reader
+/// threads: nonblocking, bounded chunks cannot be held in an EOF join by a helper.
 pub(crate) fn run_bounded(
     command: &mut Command,
     limit: usize,
     timeout: Duration,
 ) -> Result<Vec<u8>, String> {
+    let start = Instant::now();
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .process_group(0)
         .spawn()
         .map_err(|e| format!("start {command:?}: {e}"))?;
-    fn reader(
-        stream: impl Read + Send + 'static,
+    fn read_chunk(
+        stream: &mut impl Read,
+        bytes: &mut Vec<u8>,
         limit: usize,
-    ) -> thread::JoinHandle<std::io::Result<Vec<u8>>> {
-        thread::spawn(move || {
-            let mut bytes = Vec::new();
-            stream.take(limit as u64 + 1).read_to_end(&mut bytes)?;
-            Ok(bytes)
-        })
-    }
-    let stdout = reader(child.stdout.take().expect("piped"), limit);
-    let stderr = reader(child.stderr.take().expect("piped"), 64 * 1024);
-    let start = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Ok(status),
-            // EOF on an empty pipe may precede exit. Still wait up to the deadline;
-            // a full bounded reader has closed the pipe, so a writer gets EPIPE.
-            Ok(None) if start.elapsed() < timeout => thread::sleep(Duration::from_millis(5)),
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break Err("tool exceeded time bound".to_string());
+    ) -> Result<bool, String> {
+        let mut buffer = [0; 8192];
+        let count = buffer
+            .len()
+            .min(limit.saturating_sub(bytes.len()).saturating_add(1));
+        match stream.read(&mut buffer[..count]) {
+            Ok(0) => Ok(true),
+            Ok(count) => {
+                bytes.extend_from_slice(&buffer[..count]);
+                if bytes.len() > limit {
+                    return Err("tool exceeded output bound".into());
+                }
+                Ok(false)
             }
-            Err(e) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break Err(format!("wait for tool: {e}"));
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                ) =>
+            {
+                Ok(false)
+            }
+            Err(e) => Err(format!("read tool pipe: {e}")),
+        }
+    }
+    let mut stdout = child.stdout.take().expect("piped");
+    let mut stderr = child.stderr.take().expect("piped");
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    let mut reaped = false;
+    let result = (|| {
+        nonblocking(&stdout)?;
+        nonblocking(&stderr)?;
+        let (mut out_eof, mut err_eof) = (false, false);
+        loop {
+            if start.elapsed() >= timeout {
+                return Err("tool exceeded time bound (including pipe drain)".to_string());
+            }
+            let before = (out.len(), err.len());
+            if !out_eof {
+                out_eof = read_chunk(&mut stdout, &mut out, limit)?;
+            }
+            if !err_eof {
+                err_eof = read_chunk(&mut stderr, &mut err, 64 * 1024)?;
+            }
+            // Do NOT reap while a pipe is retained. Keeping our direct child
+            // waitable reserves its PID/PGID until error cleanup, even if it
+            // exited successfully. A reused unrelated group is never signaled.
+            if out_eof && err_eof {
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        reaped = true;
+                        if !status.success() || !err.is_empty() {
+                            return Err(format!(
+                                "tool failed ({status}): {}",
+                                String::from_utf8_lossy(&err)
+                            ));
+                        }
+                        return Ok(());
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        // An unexpected external reaper would invalidate PID
+                        // ownership; fail without signaling a possibly reused ID.
+                        reaped = true;
+                        return Err(format!("wait for tool: {e}"));
+                    }
+                }
+            }
+            if before == (out.len(), err.len()) {
+                thread::sleep(
+                    timeout
+                        .saturating_sub(start.elapsed())
+                        .min(Duration::from_millis(5)),
+                );
             }
         }
-    };
-    let out = stdout
-        .join()
-        .map_err(|_| "stdout reader panicked")?
-        .map_err(|e| e.to_string())?;
-    let err = stderr
-        .join()
-        .map_err(|_| "stderr reader panicked")?
-        .map_err(|e| e.to_string())?;
-    let status = status?;
-    if out.len() > limit || err.len() > 64 * 1024 {
-        return Err("tool exceeded output bound".into());
+    })();
+    if !reaped {
+        let group = i32::try_from(child.id()).expect("supported Unix pid_t fits i32");
+        // SAFETY: process_group(0) created exactly this child's fresh group.
+        // The child has NOT been reaped, reserving its positive PID (>1).
+        // Only this owned group receives SIGKILL; never PID 0/-1 or our group.
+        if group > 1 && unsafe { kill(-group, 9) } != 0 {
+            let _ = child.kill();
+        }
+        child
+            .wait()
+            .map_err(|e| format!("reap stopped tool: {e}"))?;
     }
-    if !status.success() || !err.is_empty() {
-        return Err(format!(
-            "tool failed ({status}): {}",
-            String::from_utf8_lossy(&err)
-        ));
-    }
+    result?;
     Ok(out)
 }
 
@@ -1465,6 +1540,138 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn release_tool_inherited_pipe_child() {
+        use std::os::unix::process::CommandExt;
+        let Ok(case) = std::env::var("IPN_T9_PIPE_CASE") else {
+            return;
+        };
+        let directory = PathBuf::from(std::env::var_os("IPN_T9_PIPE_DIR").unwrap());
+        let script = r#"
+import os, subprocess, sys, time
+from pathlib import Path
+stream, ending = sys.argv[1].split('-')
+holder = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'],
+    stdout=None if stream == 'stdout' else subprocess.DEVNULL,
+    stderr=None if stream == 'stderr' else subprocess.DEVNULL)
+Path('holder-pid').write_text(str(holder.pid))
+Path('tool-group').write_text(str(os.getpid()))
+Path('ready').write_text(ending)
+if ending == 'exit': os._exit(0)
+time.sleep(30)
+"#;
+        let start = Instant::now();
+        // A separate fixture group also exists on the unfixed helper, so the
+        // outer watchdog can clean up this exact owned tree after a RED hang.
+        let result = run_bounded(
+            Command::new("python3")
+                .arg("-c")
+                .arg(script)
+                .arg(&case)
+                .current_dir(&directory)
+                .process_group(0),
+            4096,
+            Duration::from_millis(500),
+        );
+        let elapsed = start.elapsed();
+        let ready = fs::read_to_string(directory.join("ready")).unwrap();
+        // Observe termination, not just a returned error. A fix that simply
+        // drops/detaches blocked readers while leaving the holder alive fails.
+        let cleanup = r#"
+import os, signal, subprocess, time
+from pathlib import Path
+pid = Path('holder-pid').read_text().strip()
+deadline = time.monotonic() + 1
+while True:
+    state = subprocess.run(['ps', '-o', 'stat=', '-p', pid], capture_output=True, check=False).stdout.strip()
+    if not state or state.startswith(b'Z'): break
+    if time.monotonic() >= deadline:
+        os.killpg(int(Path('tool-group').read_text()), signal.SIGKILL)
+        raise AssertionError('owned pipe holder was not terminated')
+    time.sleep(.01)
+"#;
+        let status = Command::new("python3")
+            .arg("-c")
+            .arg(cleanup)
+            .current_dir(&directory)
+            .status()
+            .unwrap();
+        assert!(
+            result.is_err(),
+            "retained {case} must exhaust the operation deadline"
+        );
+        assert!(
+            elapsed < Duration::from_millis(1500),
+            "pipe drain exceeded deadline: {case}"
+        );
+        assert_eq!(ready, case.split_once('-').unwrap().1);
+        assert!(status.success(), "owned holder cleanup failed for {case}");
+    }
+
+    #[test]
+    fn release_tool_inherited_pipes_obey_deadline_under_outer_watchdog() {
+        use std::os::unix::process::CommandExt;
+        let mut failures = Vec::new();
+        for case in ["stdout-exit", "stderr-exit", "stdout-kill", "stderr-kill"] {
+            let fixture = Fixture::new();
+            let mut driver = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "package::tests::release_tool_inherited_pipe_child",
+                    "--nocapture",
+                ])
+                .env("IPN_T9_PIPE_CASE", case)
+                .env("IPN_T9_PIPE_DIR", &fixture.0)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .process_group(0)
+                .spawn()
+                .unwrap();
+            let started = Instant::now();
+            let completed = loop {
+                if let Some(status) = driver.try_wait().unwrap() {
+                    break Some(status);
+                }
+                if started.elapsed() >= Duration::from_secs(4) {
+                    break None;
+                }
+                thread::sleep(Duration::from_millis(10));
+            };
+            match completed {
+                None => {
+                    // These IDs belong only to this live, isolated fixture. The
+                    // holder is sleeping for 30s, retaining the group until cleanup.
+                    let group = fs::read_to_string(fixture.0.join("tool-group")).unwrap();
+                    let cleanup = Command::new("python3")
+                        .args([
+                            "-c",
+                            "import os,signal,sys; os.killpg(int(sys.argv[1]),signal.SIGKILL)",
+                            group.trim(),
+                        ])
+                        .status()
+                        .unwrap();
+                    assert!(cleanup.success());
+                    driver.kill().unwrap();
+                    driver.wait().unwrap();
+                    failures.push(format!("{case}: actual run_bounded exceeded 4s outer watchdog (500ms operation deadline)"));
+                }
+                Some(status) if !status.success() => {
+                    failures.push(format!("{case}: bounded-helper child regression failed"));
+                }
+                Some(_) => {}
+            }
+            let output = driver.wait_with_output().unwrap();
+            if !output.stdout.is_empty() {
+                println!("{case}: {}", String::from_utf8_lossy(&output.stdout));
+            }
+            if !output.stderr.is_empty() {
+                println!("{case}: {}", String::from_utf8_lossy(&output.stderr));
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[test]
     fn release_aggregate_bounds_compressed_and_decompressed_input_and_cleans_up() {
         for fault in ["compressed-limit", "decompressed-limit", "not-gzip"] {
             let fixture = Fixture::new();
@@ -1508,28 +1715,19 @@ pub(crate) mod tests {
         }
     }
 
-    fn workflow_python(source: &str, marker: &str) -> String {
-        source
-            .split(&format!("# BEGIN {marker}\n"))
-            .nth(1)
-            .unwrap()
-            .split(&format!("          # END {marker}"))
-            .next()
-            .unwrap()
-            .lines()
-            .map(|line| line.strip_prefix("          ").unwrap_or(line))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    fn run_workflow_fixture(code: &str, body: &str) {
+    fn run_artifact_fixture(body: &str) {
         let fixture = Fixture::new();
-        let script = format!("{code}\n{body}\n");
+        let module_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join(".github/scripts");
         let output = run_bounded(
             Command::new("python3")
+                .arg("-B")
                 .arg("-c")
-                .arg(script)
+                .arg(body)
                 .current_dir(&fixture.0)
+                .env("PYTHONPATH", module_path)
                 .env("GITHUB_SHA", "f5494bd2e7939fd99ca475c40561fed38ab2bea3")
                 .env("GITHUB_RUN_ID", "123")
                 .env("GITHUB_REPOSITORY_ID", "456")
@@ -1537,19 +1735,18 @@ pub(crate) mod tests {
             65536,
             Duration::from_secs(10),
         );
-        assert!(output.is_ok(), "workflow validator failed: {output:?}");
+        assert!(
+            output.is_ok(),
+            "shared CI helper fixture failed: {output:?}"
+        );
     }
 
     #[test]
     fn release_actual_workflow_environment_validator_rejects_missing_rules_and_schema() {
-        let code = workflow_python(
-            include_str!("../../.github/workflows/release.yml"),
-            "protection-validation",
-        );
-        run_workflow_fixture(
-            &code,
+        run_artifact_fixture(
             r#"
 import copy
+from artifacts import require_protection
 valid = {'id': 10, 'name': 'release', 'url': 'https://api.github.com/repos/rammses/ipnedir/environments/release', 'protection_rules': [{'id': 20, 'type': 'required_reviewers', 'prevent_self_review': False, 'reviewers': [{'type': 'User', 'reviewer': {'id': 30, 'login': 'owner'}}]}]}
 require_protection(valid)
 for key, value in [('id', False), ('name', 'staging'), ('url', 'https://evil.test/release'), ('protection_rules', []), ('protection_rules', None)]:
@@ -1572,17 +1769,12 @@ for key in ['id', 'type', 'prevent_self_review', 'reviewers']:
     }
 
     #[test]
-    fn release_actual_workflow_artifact_validators_bind_server_digest_run_sha_and_safe_zip() {
-        for source in [
-            include_str!("../../.github/workflows/ci.yml"),
-            include_str!("../../.github/workflows/release.yml"),
-        ] {
-            let code = workflow_python(source, "artifact-validation");
-            run_workflow_fixture(
-                &code,
-                r#"
+    fn release_actual_shared_artifact_validator_binds_server_digest_run_sha_and_safe_zip() {
+        run_artifact_fixture(
+            r#"
 import copy, hashlib, zipfile
 from pathlib import Path
+from artifacts import verify_subject, extract_zip
 valid = {'id': 10, 'name': 'candidate-test', 'size_in_bytes': 100, 'digest': 'sha256:' + 'a'*64, 'expired': False, 'workflow_run': {'id': 123, 'repository_id': 456, 'head_repository_id': 456, 'head_sha': 'f5494bd2e7939fd99ca475c40561fed38ab2bea3'}}
 assert verify_subject(valid, 'candidate-test') == (10, 'a'*64)
 for key, value in [('id', False), ('name', 'other'), ('size_in_bytes', 200*1024*1024), ('digest', None), ('digest', 'sha256:' + 'A'*64), ('expired', True), ('workflow_run', None)]:
@@ -1626,7 +1818,59 @@ for fault in ['valid', 'bad-digest', 'traversal', 'symlink', 'duplicate', 'missi
         assert all(p.read_bytes() == b'abc' for p in destination.iterdir())
 assert not Path('escape').exists()
 "#,
-            );
-        }
+        );
+    }
+
+    #[test]
+    fn release_actual_shared_download_process_bounds_output_errors_and_retained_pipes() {
+        run_artifact_fixture(
+            r#"
+import os, signal, subprocess, sys, threading, time
+from pathlib import Path
+from artifacts import _run_bounded
+assert _run_bounded([sys.executable, '-c', 'import os; os.write(1,b"abc")'], 3, 1) == b'abc'
+for code in ['import sys; sys.exit(17)', 'import os; os.write(1,b"abcd")', 'import time; time.sleep(3)']:
+    started = time.monotonic()
+    try: _run_bounded([sys.executable, '-c', code], 3, .1)
+    except ValueError: pass
+    else: raise AssertionError('failed/open-ended download process accepted')
+    assert time.monotonic() - started < 1
+for ending in ['exit', 'kill']:
+    code = '''import os,subprocess,sys,time
+from pathlib import Path
+holder = subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'])
+Path('group').write_text(str(os.getpid()))
+Path('holder').write_text(str(holder.pid))
+if sys.argv[1] == 'exit': os._exit(0)
+time.sleep(30)
+'''
+    started = time.monotonic()
+    def watchdog_cleanup():
+        pid = Path('holder').read_text().strip()
+        state = subprocess.run(['ps','-o','stat=','-p',pid], capture_output=True).stdout.strip()
+        if state and not state.startswith(b'Z'):
+            os.killpg(int(Path('group').read_text()), signal.SIGKILL)
+    watchdog = threading.Timer(2, watchdog_cleanup)
+    watchdog.start()
+    try:
+        try: _run_bounded([sys.executable, '-c', code, ending], 1024, .3)
+        except ValueError: pass
+        else: raise AssertionError('retained download pipe accepted')
+        assert time.monotonic() - started < 1.5
+    finally:
+        watchdog.cancel()
+        watchdog.join()
+        # The known holder reserves this fixture group while alive; never signal
+        # an ID after observing termination/reuse is possible.
+        pid = Path('holder').read_text().strip()
+        for attempt in range(100):
+            state = subprocess.run(['ps','-o','stat=','-p',pid], capture_output=True).stdout.strip()
+            if not state or state.startswith(b'Z'): break
+            if attempt == 99:
+                os.killpg(int(Path('group').read_text()), signal.SIGKILL)
+                raise AssertionError('download holder not terminated')
+            time.sleep(.01)
+"#,
+        );
     }
 }

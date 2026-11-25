@@ -55,7 +55,10 @@ rejects missing, renamed, swapped, tampered or extra inputs; symlinks, links,
 PAX/GNU extensions, paths, duplicate entries and malformed tar headers fail.
 Archive input is capped at 32 MiB compressed / 64 MiB decompressed, binaries
 at 48 MiB and each document at 1 MiB. Subprocess output and wall-clock time are
-bounded. Validation precedes any private extraction; foreign binaries are
+bounded, including inherited stdout/stderr pipe draining after direct-child
+exit. Nonblocking reads use no detachable reader threads; on failure the tool's
+private child process group is stopped and the direct child reaped. Validation
+precedes any private extraction; foreign binaries are
 never run by aggregation. Staging is privately owned below the chosen dist
 directory and cleaned on success/error. Existing outputs are not overwritten;
 use a fresh directory on retry. Only a complete set creates `checksums.txt`
@@ -79,6 +82,14 @@ itself (not a warning-only action check), validates bounded flat regular ZIP
 members before writing them, and then runs `prepare-release`. In CI, archive
 source records must equal the clean actual checkout/GitHub SHA. A missing leg,
 unknown schema, absent digest or API permission error stops preparation.
+
+Both workflows import the single CI-only implementation
+[`artifacts.py`](../.github/scripts/artifacts.py) for bounded read-only downloads,
+artifact identity/digest/ZIP validation and the server protection-response
+validator. Selection/publication wiring remains in the workflows. Offline tests
+import this actual module, not extracted source fragments. Native evidence hashes
+include it. Imports disable bytecode writes to keep the checked-out source clean;
+this helper creates no Python dependency for the installed Rust application.
 
 Outputs are **Actions artifacts**, not releases:
 
