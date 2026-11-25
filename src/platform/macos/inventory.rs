@@ -254,9 +254,15 @@ pub(super) mod native {
         // SAFETY: caller supplies a getifaddrs sockaddr allocation. Darwin's
         // first byte is sa_len, and the API owns at least that many bytes.
         let len = unsafe { bytes.read() } as usize;
-        // SAFETY: the allocation is live until owner drops. Zero/short lengths
-        // are copied too, so mandatory address decoding can reject them while
-        // optional bad masks merely yield prefix None.
+        if len == 0 {
+            // Libinfo getifaddrs.c RTAX_NETMASK zero-fills an address-sized
+            // allocation for this special mask. Preserve the already-read
+            // length byte as an owned marker, without reading family/payload
+            // beyond sa_len. Ordinary address decoding still rejects it.
+            return Some(vec![0]);
+        }
+        // SAFETY: the allocation is live until owner drops. Copy exactly len,
+        // not routing padding or a full sockaddr cast for a compact netmask.
         Some(unsafe { slice::from_raw_parts(bytes, len) }.to_vec())
     }
 

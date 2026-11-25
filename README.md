@@ -8,13 +8,17 @@ needed to measure the counter deltas.
 ## Current status
 
 The CLI, native collectors, optional public lookup workers, and report are
-implemented. Actual four-platform native CI evidence is recorded below;
-Builder's independent evidence review and final acceptance remain pending.
+implemented. Task9 preparation was accepted after independent review of
+[four-native candidate run 45630939249](https://github.com/rammses/ipnedir/actions/runs/45630939249)
+for source `81ac4cd8c3586acc7482b690822f4478d725991d`, including actual
+archives, aggregate checks, and generated formula proof. That historical proof
+does not verify the final-fix source: a new four-native run (including both Macs'
+prefix corroboration), fresh scoped final review, and final acceptance are pending.
 No release archives or Homebrew/tap packages have been published; there is no
 published install promised here.
 Archive/formula generation and a fail-closed release workflow are prepared;
-new four-native **candidate** verification and release-owner operations remain
-pending. See [release preparation and the owner runbook](docs/releases.md).
+release-owner publication and Homebrew operations remain unperformed.
+See [release preparation and the owner runbook](docs/releases.md).
 
 ## Usage
 
@@ -151,7 +155,9 @@ certification of future commits, physical link capacity, every network topology,
 or live public-provider availability. No native sample counter above 2^32 was
 observed; driver speed was unavailable on ARM GNU/Linux and both macOS runners.
 Unsupported values were not manufactured.
-**Builder's independent evidence review and final acceptance remain pending.**
+The later source `81ac4cd` four-native candidate/archive/aggregate proof was
+independently accepted for Task9 preparation, as recorded in the current status.
+**Final-fix source native verification and scoped final review remain pending.**
 The workflow has read-only repository permissions, uses no secrets, and retains
 only explicit verification artifacts. Those binaries are CI evidence, not
 published release archives; the workflow does not publish releases or alter a

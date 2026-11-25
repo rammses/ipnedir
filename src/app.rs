@@ -15,7 +15,7 @@ use crate::{
 };
 
 const USAGE: &str = "Usage: ipnedir [--offline | --help | --version]\n";
-const HELP: &str = "ipnedir - one-shot native network report\n\nUsage: ipnedir [--offline | --help | --version]\n\n  --offline       Local sample only; no public HTTP or DNS work\n  --help, -h      Show this help without collection or network work\n  --version, -V   Show version without collection or network work\n\nDefault mode contacts IPv4/IPv6 icanhazip endpoints over HTTPS, revealing\nthe respective egress IP to that service. Requests are direct (no proxies);\nVPN/system routing still applies. Failed or unfinished lookups are unavailable\nand do not delay the local report. RX/TX are best-effort one-second snapshot\ndeltas, not a bandwidth-capacity measurement. Use --offline for no requests.\n";
+const HELP: &str = "ipnedir - one-shot native network report\n\nUsage: ipnedir [--offline | --help | --version]\n\n  --offline       Local sample only; no public HTTP or DNS work\n  --help, -h      Show this help without collection or network work\n  --version, -V   Show version without collection or network work\n\nDefault mode contacts IPv4/IPv6 icanhazip endpoints over HTTPS, revealing\nthe respective egress IP to that service. Requests are direct (no proxies);\nVPN/system routing still applies. Failed or unfinished lookups are unavailable\nand do not delay the local report. RX/TX are best-effort one-second snapshot\ndeltas, not a bandwidth-capacity measurement. A replacement reusing the same\nindex/name with nondecreasing counters is indistinguishable from a continuing\ndevice. Use --offline for no requests.\n";
 
 pub trait Clock {
     fn now(&self) -> Instant;

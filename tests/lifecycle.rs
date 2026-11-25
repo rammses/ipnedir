@@ -47,7 +47,16 @@ fn app_help_version_and_usage_prevent_initialization() {
         assert!(rig.clock.sleeps.is_empty());
         if args == ["--help"] {
             let help = String::from_utf8(out).unwrap();
-            for note in ["icanhazip", "HTTPS", "egress", "unavailable", "--offline"] {
+            for note in [
+                "icanhazip",
+                "HTTPS",
+                "egress",
+                "unavailable",
+                "--offline",
+                "index/name",
+                "nondecreasing counters",
+                "indistinguishable",
+            ] {
                 assert!(help.contains(note), "help missing {note}");
             }
         }

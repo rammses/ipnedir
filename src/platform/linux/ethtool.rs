@@ -22,7 +22,9 @@ pub(super) fn required_words(words: &[u32]) -> Option<usize> {
 }
 
 fn mbps_to_bps(speed: u32) -> Option<u64> {
-    if speed == 0 || speed == u32::MAX {
+    // Linux v6.12 ethtool_validate_speed permits 0..=INT_MAX or the separate
+    // SPEED_UNKNOWN (-1) sentinel; neither zero nor unknown is a reportable rate.
+    if speed == 0 || speed > i32::MAX as u32 {
         return None;
     }
     u64::from(speed).checked_mul(1_000_000)

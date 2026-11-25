@@ -667,7 +667,7 @@ fn linux_ethtool_returned_command_count_length_and_speed_sentinels() {
     );
     assert_eq!(
         ethtool::modern_speed(&settings(0x4c, 3, 4_294_967_294, 21), 3),
-        Some(4_294_967_294_000_000)
+        None
     );
     for words in [
         settings(1, 3, 1000, 21),
@@ -691,6 +691,48 @@ fn linux_ethtool_returned_command_count_length_and_speed_sentinels() {
     wrong_cmd[0] = 0x4c;
     assert_eq!(ethtool::legacy_speed(&wrong_cmd), None);
     assert_eq!(ethtool::legacy_speed(&legacy(1000)[..10]), None);
+}
+
+#[test]
+fn linux_ethtool_modern_rejects_speeds_above_native_int_max() {
+    for (mbps, expected) in [
+        (2_147_483_647, Some(2_147_483_647_000_000)),
+        (2_147_483_648, None),
+        (4_294_967_294, None),
+    ] {
+        let mut io = SettingsIo::new(vec![
+            Ok(settings(0x4c, -1, 0, 12)),
+            Ok(settings(0x4c, 1, mbps, 15)),
+        ]);
+        assert_eq!(
+            ethtool::speed_with(&mut io, &test_id()),
+            expected,
+            "{mbps} Mbps"
+        );
+        assert_eq!(io.calls, [(0x4c, 48, 0), (0x4c, 60, 1)]);
+        assert!(io.identities.is_empty());
+    }
+}
+
+#[test]
+fn linux_ethtool_legacy_rejects_speeds_above_native_int_max() {
+    for (mbps, expected) in [
+        (2_147_483_647, Some(2_147_483_647_000_000)),
+        (2_147_483_648, None),
+        (4_294_967_294, None),
+    ] {
+        let mut io = SettingsIo::new(vec![
+            Err(io::ErrorKind::Unsupported.into()),
+            Ok(legacy(mbps)),
+        ]);
+        assert_eq!(
+            ethtool::speed_with(&mut io, &test_id()),
+            expected,
+            "{mbps} Mbps"
+        );
+        assert_eq!(io.calls, [(0x4c, 48, 0), (1, 44, 0)]);
+        assert!(io.identities.is_empty());
+    }
 }
 
 #[test]

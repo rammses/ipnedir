@@ -257,6 +257,83 @@ fn verify_selected_sdk() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn darwin_native_loopback_prefixes_match_independent_getifaddrs_mask() {
+    use std::{ffi::CStr, ptr, slice};
+
+    verify_selected_sdk();
+
+    struct List(*mut libc::ifaddrs);
+    impl Drop for List {
+        fn drop(&mut self) {
+            // SAFETY: this guard uniquely owns the successful getifaddrs list;
+            // all native borrows end before the guard, including on assertion.
+            unsafe { libc::freeifaddrs(self.0) };
+        }
+    }
+
+    let mut head = ptr::null_mut();
+    // SAFETY: live out-pointer; no host network configuration is changed.
+    assert_eq!(unsafe { libc::getifaddrs(&mut head) }, 0);
+    let list = List(head);
+    let mut current = list.0;
+    let mut observed_v4 = false;
+    while !current.is_null() {
+        // SAFETY: current is a node in the still-owned native list.
+        let entry = unsafe { &*current };
+        if !entry.ifa_name.is_null()
+            // SAFETY: getifaddrs supplies a live NUL-terminated name.
+            && unsafe { CStr::from_ptr(entry.ifa_name) }.to_bytes() == b"lo0"
+            && !entry.ifa_addr.is_null()
+        {
+            let raw = entry.ifa_addr.cast::<u8>();
+            // SAFETY: read the length byte first; copy only its declared span.
+            let len = usize::from(unsafe { raw.read() });
+            // SAFETY: getifaddrs owns this many initialized bytes until Drop.
+            let address = unsafe { slice::from_raw_parts(raw, len) };
+            if address.get(1) == Some(&(libc::AF_INET as u8))
+                && address.get(4..8) == Some(&[127, 0, 0, 1])
+            {
+                assert!(!entry.ifa_netmask.is_null(), "native lo0 IPv4 mask");
+                let raw = entry.ifa_netmask.cast::<u8>();
+                // SAFETY: read only sa_len, then exactly that many mask bytes.
+                let len = usize::from(unsafe { raw.read() });
+                assert!((5..=16).contains(&len), "native /8 mask length {len}");
+                // SAFETY: no full sockaddr cast or read of routing padding.
+                let mask = unsafe { slice::from_raw_parts(raw, len) };
+                assert!(matches!(mask[1], 0 | 2));
+                // Independent known lo0 127.0.0.1/8 data, not the production
+                // prefix decoder or an expectation computed from its helper.
+                assert_eq!(mask[4], 255);
+                assert!(mask[5..len.min(8)].iter().all(|byte| *byte == 0));
+                eprintln!("independent native lo0 IPv4 /8 mask: {mask:?}");
+                observed_v4 = true;
+            }
+        }
+        current = entry.ifa_next;
+    }
+    assert!(observed_v4, "independent native lo0 127.0.0.1/8 required");
+    drop(list);
+
+    let snapshot = NativeCollector.snapshot().expect("native Darwin inventory");
+    let loopback = snapshot
+        .interfaces
+        .iter()
+        .find(|i| i.id.name == b"lo0")
+        .expect("native loopback identity");
+    for (ip, prefix) in [("127.0.0.1", 8), ("::1", 128)] {
+        let ip: std::net::IpAddr = ip.parse().unwrap();
+        let address = loopback
+            .addresses
+            .iter()
+            .find(|a| a.ip == ip)
+            .expect("known addressed native loopback");
+        assert_eq!(address.prefix, Some(prefix), "native {ip} prefix");
+        eprintln!("corroborated owned native loopback: {ip}/{prefix}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn darwin_native_loopback_counters_match_read_only_ifmib() {
     verify_selected_sdk();
 

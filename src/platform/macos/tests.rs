@@ -977,11 +977,14 @@ fn darwin_inventory_bad_masks_preserve_the_assigned_address() {
             Some(want.clone())
         );
     }
-    let mut short = v4([255, 255, 255, 0]);
-    short[0] = 7;
+    let mut compact = v4([255, 255, 255, 0]);
+    compact[0] = 7;
     assert_eq!(
-        wire::address(&ip, Some(&short), 7).unwrap(),
-        Some(want.clone())
+        wire::address(&ip, Some(&compact), 7)
+            .unwrap()
+            .unwrap()
+            .prefix,
+        Some(24)
     );
     let mut long = v4([255, 255, 255, 0]);
     long.push(0);
@@ -993,6 +996,110 @@ fn darwin_inventory_bad_masks_preserve_the_assigned_address() {
         wire::address(&ip, Some(&valid), 7).unwrap().unwrap().prefix,
         Some(24)
     );
+}
+
+#[test]
+fn darwin_inventory_compact_masks_zero_extend_only_the_declared_address_bits() {
+    let ip = v4([192, 0, 2, 9]);
+    for (mask, expected) in [
+        (vec![5, 2, 0, 0, 255], 8),
+        (vec![6, 2, 0, 0, 255, 255], 16),
+        (vec![7, 2, 0, 0, 255, 255, 255], 24),
+        (vec![8, 2, 0, 0, 255, 255, 255, 255], 32),
+        (vec![7, 0, 0, 0, 255, 255, 255], 24),
+        // Poison after sa_len must not contribute another eight mask bits.
+        (vec![7, 2, 0, 0, 255, 255, 255, 255], 24),
+    ] {
+        assert_eq!(
+            wire::address(&ip, Some(&mask), 7).unwrap(),
+            Some(Address {
+                ip: "192.0.2.9".parse().unwrap(),
+                prefix: Some(expected),
+                scope_id: None,
+            }),
+            "mask={mask:?}"
+        );
+    }
+    for (mask, expected) in [
+        (
+            vec![
+                16, 30, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255,
+            ],
+            64,
+        ),
+        (
+            vec![
+                24, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                255, 255, 255, 255, 255,
+            ],
+            128,
+        ),
+    ] {
+        assert_eq!(
+            wire::address(&v6(Ipv6Addr::LOCALHOST.octets(), 0), Some(&mask), 1)
+                .unwrap()
+                .unwrap()
+                .prefix,
+            Some(expected),
+            "IPv6 mask={mask:?}"
+        );
+    }
+}
+
+#[test]
+fn darwin_inventory_explicit_zero_length_and_full_zero_masks_are_valid() {
+    // Native copy retains the observed zero sa_len byte as [0], not an empty
+    // or missing mask. Libinfo zero-fills that special RTAX_NETMASK allocation.
+    for (ip, full_zero) in [
+        (v4([192, 0, 2, 9]), v4([0; 4])),
+        (v6(Ipv6Addr::LOCALHOST.octets(), 0), v6([0; 16], 0)),
+    ] {
+        for mask in [vec![0], full_zero] {
+            assert_eq!(
+                wire::address(&ip, Some(&mask), 1).unwrap().unwrap().prefix,
+                Some(0),
+                "mask={mask:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn darwin_inventory_malformed_compact_masks_preserve_ip_without_a_prefix() {
+    let ip = v4([192, 0, 2, 9]);
+    for mask in [
+        vec![],
+        vec![1],
+        vec![2, 2],
+        vec![3, 2, 0],
+        vec![4, 2, 0, 0],
+        vec![7, 2, 0, 0, 255, 255], // shorter than the declared length
+        vec![7, 30, 0, 0, 255, 255, 255],
+        vec![7, 2, 0, 0, 255, 0, 255],
+        vec![17, 2, 0, 0, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![0, 255], // not the owned zero-length marker
+    ] {
+        assert_eq!(
+            wire::address(&ip, Some(&mask), 7).unwrap(),
+            Some(Address {
+                ip: "192.0.2.9".parse().unwrap(),
+                prefix: None,
+                scope_id: None,
+            }),
+            "mask={mask:?}"
+        );
+    }
+    for mask in [
+        vec![8, 30, 0, 0, 0, 0, 0, 0],
+        vec![10, 30, 0, 0, 0, 0, 0, 0, 255],
+        v4([255; 4]),
+    ] {
+        let address = wire::address(&v6(Ipv6Addr::LOCALHOST.octets(), 0), Some(&mask), 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(address.ip, IpAddr::V6(Ipv6Addr::LOCALHOST));
+        assert_eq!(address.prefix, None, "IPv6 mask={mask:?}");
+    }
 }
 
 #[test]

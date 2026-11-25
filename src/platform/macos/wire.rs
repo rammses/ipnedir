@@ -169,11 +169,24 @@ pub(super) fn address(
     };
     // A malformed/absent mask makes only the prefix unavailable, not the IP.
     let prefix = mask.and_then(|mask| {
+        // Libinfo explicitly zero-fills a sa_len == 0 RTAX_NETMASK. The native
+        // copy preserves just that observed length byte, not an empty/missing
+        // mask, and no family or payload may be read for this representation.
+        if mask == [0] {
+            return Some(0);
+        }
         let mask = sockaddr(mask).ok()?;
-        if mask.len() != size || (mask[1] != 0 && mask[1] != family) {
+        if mask.len() <= range.start || mask.len() > size || (mask[1] != 0 && mask[1] != family) {
             return None;
         }
-        prefix(mask.get(range)?)
+        // XNU in_socktrim omits trailing zero mask octets; Libinfo copies the
+        // compact nonzero length without expanding it to sockaddr_in. Only
+        // declared bytes enter owned, zero-initialized family-width storage.
+        let mut bits = [0; 16];
+        let end = mask.len().min(range.end);
+        let present = end - range.start;
+        bits[..present].copy_from_slice(mask.get(range.start..end)?);
+        prefix(&bits[..range.len()])
     });
     Ok(Some(Address {
         ip,
