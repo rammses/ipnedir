@@ -164,13 +164,16 @@ fn ip_bytes(bytes: &[u8], family: Family) -> Result<&[u8], &'static str> {
 }
 
 fn mask_prefix(mask: &[u8], family: Family) -> Result<u8, &'static str> {
-    let (af, length, start, width) = match family {
-        Family::V4 => (AF_INET, 16, 4, 4),
-        Family::V6 => (AF_INET6, 28, 8, 16),
+    let (length, start, width) = match family {
+        Family::V4 => (16, 4, 4),
+        Family::V6 => (28, 8, 16),
     };
-    if mask.len() > length || (!mask.is_empty() && mask[1] != 0 && mask[1] != af) {
-        return Err("invalid route netmask length or family");
+    if mask.len() > length {
+        return Err("invalid route netmask length");
     }
+    // XNU xnu-12377.1.9 route.c/RTAX_NETMASK: rn_addmask may fill the
+    // pre-address header with all ones, so sa_family is opaque here. The
+    // already-validated destination family selects mask offset/width instead.
     // Radix masks may omit zero tail bytes (or all bytes for /0). Pad only the
     // missing address bits. Scope/port/padding bytes are not prefix bits.
     let mut bits = [0; 16];

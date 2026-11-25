@@ -162,7 +162,11 @@ mod native {
             if end == 0 {
                 return Err(io::ErrorKind::InvalidData.into());
             }
-            let name = by_index.ifr_name[..end].iter().map(|&b| b as u8).collect();
+            // c_char signedness is target-dependent; preserve its byte bits.
+            let name = by_index.ifr_name[..end]
+                .iter()
+                .map(|b| b.to_ne_bytes()[0])
+                .collect();
             Ok(InterfaceId {
                 index: index as u32,
                 name,

@@ -266,6 +266,92 @@ fn darwin_routes_short_masks_keep_their_actual_nondefault_prefix_bits() {
 }
 
 #[test]
+fn darwin_routes_radix_masks_v4_opaque_headers_keep_default_coverage() {
+    // XNU rn_addmask may fill bytes before sin_addr with all ones. Neither
+    // 0xff, another AF value, nor an opaque header is a mask-family tag.
+    for mask in [
+        vec![4, 0xff, 0xff, 0xff],
+        vec![2, 0x7e],
+        vec![4, 30, 0, 0],
+        vec![5, 30, 0x12, 0x34, 0],
+    ] {
+        let bytes = [
+            route_v4(3),
+            route(7, 1, &[(0, v4([0; 4])), (2, mask)]),
+            route_v4(11),
+        ]
+        .concat();
+        assert_eq!(
+            routes::decode(&bytes, Family::V4),
+            Coverage::Complete(BTreeSet::from([3, 7, 11]))
+        );
+    }
+}
+
+#[test]
+fn darwin_routes_radix_masks_v6_opaque_headers_keep_default_coverage() {
+    for mask in [
+        vec![8, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
+        vec![2, 0x7e],
+        vec![9, 2, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0],
+    ] {
+        let bytes = [
+            route_v6(3),
+            route(7, 0x0100_0001, &[(0, v6([0; 16], 7)), (2, mask)]),
+            route_v6(11),
+        ]
+        .concat();
+        assert_eq!(
+            routes::decode(&bytes, Family::V6),
+            Coverage::Complete(BTreeSet::from([3, 7, 11]))
+        );
+    }
+}
+
+#[test]
+fn darwin_routes_radix_masks_v4_opaque_headers_preserve_nondefault_prefix_bits() {
+    // /1, /24 and /32 are nondefaults even with an all-zero destination.
+    for mask in [
+        vec![5, 0xff, 0xff, 0xff, 0x80],
+        vec![7, 0x7e, 0x12, 0x34, 0xff, 0xff, 0xff],
+        vec![8, 30, 0x12, 0x34, 0xff, 0xff, 0xff, 0xff],
+    ] {
+        let bytes = [
+            route_v4(3),
+            route(7, 1, &[(0, v4([0; 4])), (2, mask)]),
+            route_v4(11),
+        ]
+        .concat();
+        assert_eq!(
+            routes::decode(&bytes, Family::V4),
+            Coverage::Complete(BTreeSet::from([3, 11]))
+        );
+    }
+}
+
+#[test]
+fn darwin_routes_radix_masks_v6_opaque_headers_preserve_nondefault_prefix_bits() {
+    // Trimmed /1 and /64 masks; only bytes at/after sin6_addr are prefix bits.
+    for mask in [
+        vec![9, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x80],
+        vec![
+            16, 0x7e, 1, 2, 3, 4, 5, 6, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        ],
+    ] {
+        let bytes = [
+            route_v6(3),
+            route(7, 0x0100_0001, &[(0, v6([0; 16], 7)), (2, mask)]),
+            route_v6(11),
+        ]
+        .concat();
+        assert_eq!(
+            routes::decode(&bytes, Family::V6),
+            Coverage::Complete(BTreeSet::from([3, 11]))
+        );
+    }
+}
+
+#[test]
 fn darwin_routes_nondefault_destinations_and_host_routes_are_not_defaults() {
     let mut bytes = route(4, 1, &[(0, v4([192, 0, 2, 0])), (2, vec![0; 4])]);
     bytes.extend(route(19, 5, &[(0, v4([0; 4]))]));
@@ -305,7 +391,13 @@ fn darwin_routes_nonforwarding_dead_reject_blackhole_and_down_are_excluded() {
 
 #[test]
 fn darwin_routes_malformed_masks_cannot_become_complete_empty_or_defaults() {
-    for mask in [vec![5, 0, 0, 0, 0x81], vec![4, 30, 0, 0], vec![17; 17]] {
+    // The former [4, 30, 0, 0] case is a valid opaque radix-mask header, now
+    // covered positively above. Use actual malformed address bits instead.
+    for mask in [
+        vec![5, 0, 0, 0, 0x81],
+        vec![6, 0xff, 0xff, 0xff, 0, 0x80],
+        vec![17; 17],
+    ] {
         route_incomplete(
             routes::decode(&route(4, 1, &[(0, v4([0; 4])), (2, mask)]), Family::V4),
             &[],
@@ -323,6 +415,29 @@ fn darwin_routes_wrong_family_is_visible_and_does_not_cross_pollinate() {
     bytes.extend(route_v6(19));
     route_incomplete(routes::decode(&bytes, Family::V4), &[4]);
     route_incomplete(routes::decode(&bytes, Family::V6), &[19]);
+    // Opaque headers are valid only for masks, never ordinary destinations or
+    // gateways. Keep both family checks despite accepting an opaque mask.
+    let mut opaque_ip = v4([0; 4]);
+    opaque_ip[1] = 0xff;
+    for (flags, addresses) in [
+        (
+            1,
+            vec![(0, opaque_ip.clone()), (2, vec![4, 0xff, 0xff, 0xff])],
+        ),
+        (
+            3,
+            vec![
+                (0, v4([0; 4])),
+                (1, opaque_ip),
+                (2, vec![4, 0xff, 0xff, 0xff]),
+            ],
+        ),
+    ] {
+        route_incomplete(
+            routes::decode(&route(19, flags, &addresses), Family::V4),
+            &[],
+        );
+    }
 }
 
 #[test]
