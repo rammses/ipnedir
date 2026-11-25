@@ -1821,9 +1821,25 @@ assert not Path('escape').exists()
         );
     }
 
+    fn run_download_fixture(body: &str) {
+        let without_waitid = r#"
+import os
+for name in ('waitid', 'P_PID', 'P_PGID', 'P_ALL', 'P_PIDFD', 'WEXITED',
+             'WSTOPPED', 'WNOWAIT', 'CLD_EXITED', 'CLD_KILLED', 'CLD_DUMPED',
+             'CLD_STOPPED', 'CLD_TRAPPED', 'CLD_CONTINUED'):
+    if hasattr(os, name): delattr(os, name)
+"#;
+        // Run the complete real fixture in separate interpreters with both
+        // capability profiles. No production seam or supported-host skip.
+        for (profile, setup) in [("host", ""), ("without-waitid", without_waitid)] {
+            eprintln!("shared downloader fixture capability profile: {profile}");
+            run_artifact_fixture(&format!("{setup}\n{body}"));
+        }
+    }
+
     #[test]
     fn release_actual_shared_download_process_bounds_output_errors_and_retained_pipes() {
-        run_artifact_fixture(
+        run_download_fixture(
             r#"
 import os, signal, subprocess, sys, threading, time
 from pathlib import Path
@@ -1888,13 +1904,28 @@ def capture_child(*args, **kwargs):
     process = real_popen(*args, **kwargs)
     owned.append(process)
     return process
+def process_state_without_reaping(process):
+    assert process.returncode is None
+    # ps observes only this owned PID and cannot reap another process's child.
+    # Do not poll/wait the target: its unreaped PID/group must stay reserved.
+    with real_popen(['ps', '-o', 'stat=', '-p', str(process.pid)],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE) as probe:
+        try:
+            output, errors = probe.communicate(timeout=1)
+        except subprocess.TimeoutExpired:
+            probe.kill()
+            probe.communicate(timeout=1)
+            raise
+        assert probe.returncode == 0 and not errors, 'owned process-state probe failed'
+    states = output.split()
+    assert len(states) == 1, 'owned process state missing/ambiguous'
+    assert process.returncode is None
+    return states[0]
 def wait_exited_without_reaping(process):
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:
-        status = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
-        if status is not None:
-            assert status.si_pid == process.pid and status.si_code == os.CLD_EXITED
-            assert process.returncode is None
+        if process_state_without_reaping(process).startswith(b'Z'):
             return
         time.sleep(.005)
     raise AssertionError('owned child never reached the real unreaped exit state')
@@ -1923,7 +1954,7 @@ def fixture_cleanup():
 
     #[test]
     fn release_actual_shared_download_process_reaps_exited_group_permission_race() {
-        run_artifact_fixture(&format!(
+        run_download_fixture(&format!(
             "{DOWNLOAD_CLEANUP_FIXTURE}\n{}",
             r#"
 for missing in [False, True]:
@@ -1956,7 +1987,7 @@ for missing in [False, True]:
 
     #[test]
     fn release_actual_shared_download_process_keeps_live_permission_failure_fatal() {
-        run_artifact_fixture(&format!(
+        run_download_fixture(&format!(
             "{DOWNLOAD_CLEANUP_FIXTURE}\n{}",
             r#"
 injected = []
@@ -1964,7 +1995,7 @@ def signal_boundary(group, signum):
     process = owned[0]
     assert group == process.pid and signum == signal.SIGKILL
     assert process.returncode is None
-    assert os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None
+    assert process_state_without_reaping(process)[:1] in (b'R', b'S', b'I', b'D', b'T', b't', b'U', b'W')
     injected.append('live-denial')
     raise PermissionError(errno.EPERM, 'live group signal denied')
 try:
@@ -1983,7 +2014,7 @@ finally:
 
     #[test]
     fn release_actual_shared_download_process_does_not_trust_exited_leader_for_live_group() {
-        run_artifact_fixture(&format!(
+        run_download_fixture(&format!(
             "{DOWNLOAD_CLEANUP_FIXTURE}\n{}",
             r#"
 code = '''import os,subprocess,sys
