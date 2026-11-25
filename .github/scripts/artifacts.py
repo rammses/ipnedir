@@ -137,6 +137,56 @@ def require_protection(data):
     print("Actual server response has required-reviewer protection; owner approval remains a GitHub environment gate")
 
 
+def _stop_owned_process(process):
+    deadline = time.monotonic() + 5
+    denied = None
+    try:
+        try:
+            # The unreaped child still reserves this freshly owned group ID.
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except PermissionError as error:
+            # XNU killpg1 filters SZOMB and returns EPERM if no eligible member
+            # remains (xnu-11417.140.69/bsd/kern/kern_sig.c). None returncode is
+            # not evidence of liveness: Popen updates it only on poll/wait.
+            denied = error
+            try:
+                process.wait(timeout=0)
+            except subprocess.TimeoutExpired:
+                # A live denied group is NOT a zombie-only success. Still try
+                # to stop our direct child, then reap and propagate the denial.
+                process.kill()
+            else:
+                # Leader exit alone says nothing about live descendants. After
+                # reaping, NEVER deliver another signal to this recyclable ID.
+                # POSIX signal 0 delivers no signal: allow recovery only when
+                # the whole group is confirmed gone, not on EPERM/leader exit.
+                while True:
+                    try:
+                        os.killpg(process.pid, 0)
+                    except ProcessLookupError:
+                        denied = None
+                        break
+                    except PermissionError:
+                        pass
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    time.sleep(min(.01, remaining))
+    finally:
+        # Signal failures must not bypass the wait. Share one existing 5s
+        # cleanup allowance across disappearance checks and direct-child reap.
+        try:
+            process.wait(timeout=max(0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired as error:
+            if denied is not None:
+                raise denied from error
+            raise
+    if denied is not None:
+        raise denied
+
+
 def _run_bounded(command, limit, timeout):
     # Selectors/nonblocking reads bound EOF draining as well as execution; no
     # reader threads or timer callback outlive the operation. Python 3.10 APIs.
@@ -175,10 +225,6 @@ def _run_bounded(command, limit, timeout):
             if process.returncode is None:
                 # start_new_session owns exactly this group. The direct child
                 # has not been reaped, so never signal a recycled/unrelated ID.
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                process.wait(timeout=5)
+                _stop_owned_process(process)
         finally:
             process.stdout.close()

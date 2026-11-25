@@ -1873,4 +1873,156 @@ time.sleep(30)
 "#,
         );
     }
+
+    // Only the platform signal boundary is injected. Popen, output-limit
+    // handling, wait/reap, pipe ownership and the helper itself remain real.
+    const DOWNLOAD_CLEANUP_FIXTURE: &str = r#"
+import errno, os, signal, subprocess, sys, time
+from pathlib import Path
+from unittest.mock import patch
+import artifacts
+real_popen = subprocess.Popen
+real_killpg = os.killpg
+owned = []
+def capture_child(*args, **kwargs):
+    process = real_popen(*args, **kwargs)
+    owned.append(process)
+    return process
+def wait_exited_without_reaping(process):
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        status = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        if status is not None:
+            assert status.si_pid == process.pid and status.si_code == os.CLD_EXITED
+            assert process.returncode is None
+            return
+        time.sleep(.005)
+    raise AssertionError('owned child never reached the real unreaped exit state')
+def assert_reaped_and_closed(process):
+    assert process.returncode is not None, 'direct child was not waited/reaped'
+    try: os.waitpid(process.pid, os.WNOHANG)
+    except ChildProcessError: pass
+    else: raise AssertionError('direct child is still waitable')
+    assert process.stdout.closed, 'owned stdout pipe was not closed'
+def has_original_failure(error):
+    seen = set()
+    while error is not None and id(error) not in seen:
+        if isinstance(error, ValueError) and str(error) == 'GitHub response exceeds bound': return True
+        seen.add(id(error))
+        error = error.__cause__ or error.__context__
+    return False
+def fixture_cleanup():
+    # Production must do this first; this fallback runs even when RED assertions
+    # fail, so a failing cleanup regression does not leave the owned child alive.
+    for process in owned:
+        if process.returncode is None:
+            process.kill()
+        process.wait(timeout=2)
+        if process.stdout is not None: process.stdout.close()
+"#;
+
+    #[test]
+    fn release_actual_shared_download_process_reaps_exited_group_permission_race() {
+        run_artifact_fixture(&format!(
+            "{DOWNLOAD_CLEANUP_FIXTURE}\n{}",
+            r#"
+for missing in [False, True]:
+    owned.clear()
+    injected = []
+    def signal_boundary(group, signum):
+        process = owned[0]
+        assert group == process.pid
+        if signum == signal.SIGKILL:
+            wait_exited_without_reaping(process)
+            injected.append('unreaped-exit')
+            if missing: raise ProcessLookupError(errno.ESRCH, 'owned group already gone')
+            raise PermissionError(errno.EPERM, 'Darwin zombie-only group')
+        # A post-reap existence probe must deliver NO signal, even if this ID
+        # were recycled. The actual OS decides whether the real group is gone.
+        assert signum == 0 and process.returncode is not None
+        return real_killpg(group, signum)
+    try:
+        with patch.object(artifacts.subprocess, 'Popen', capture_child), patch.object(artifacts.os, 'killpg', signal_boundary):
+            try: artifacts._run_bounded([sys.executable, '-c', 'import os; os.write(1,b"abcd")'], 3, 1)
+            except ValueError as error: assert str(error) == 'GitHub response exceeds bound'
+            else: raise AssertionError('output-bound failure was lost')
+        assert injected == ['unreaped-exit']
+        assert_reaped_and_closed(owned[0])
+    finally:
+        fixture_cleanup()
+"#
+        ));
+    }
+
+    #[test]
+    fn release_actual_shared_download_process_keeps_live_permission_failure_fatal() {
+        run_artifact_fixture(&format!(
+            "{DOWNLOAD_CLEANUP_FIXTURE}\n{}",
+            r#"
+injected = []
+def signal_boundary(group, signum):
+    process = owned[0]
+    assert group == process.pid and signum == signal.SIGKILL
+    assert process.returncode is None
+    assert os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None
+    injected.append('live-denial')
+    raise PermissionError(errno.EPERM, 'live group signal denied')
+try:
+    with patch.object(artifacts.subprocess, 'Popen', capture_child), patch.object(artifacts.os, 'killpg', signal_boundary):
+        try: artifacts._run_bounded([sys.executable, '-c', 'import os,time; os.write(1,b"abcd"); time.sleep(30)'], 3, 1)
+        except PermissionError as error:
+            assert error.errno == errno.EPERM and has_original_failure(error)
+        else: raise AssertionError('genuine live cleanup denial was swallowed')
+    assert injected == ['live-denial']
+    assert_reaped_and_closed(owned[0])
+finally:
+    fixture_cleanup()
+"#
+        ));
+    }
+
+    #[test]
+    fn release_actual_shared_download_process_does_not_trust_exited_leader_for_live_group() {
+        run_artifact_fixture(&format!(
+            "{DOWNLOAD_CLEANUP_FIXTURE}\n{}",
+            r#"
+code = '''import os,subprocess,sys
+from pathlib import Path
+holder = subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+Path('holder').write_text(str(holder.pid))
+os.write(1,b'abcd')
+'''
+def signal_boundary(group, signum):
+    process = owned[0]
+    assert group == process.pid
+    if signum == signal.SIGKILL:
+        wait_exited_without_reaping(process)
+    else:
+        assert signum == 0 and process.returncode is not None
+        real_killpg(group, 0)  # The actual live holder still reserves this group.
+    raise PermissionError(errno.EPERM, 'live descendant group signal denied')
+started = time.monotonic()
+try:
+    with patch.object(artifacts.subprocess, 'Popen', capture_child), patch.object(artifacts.os, 'killpg', signal_boundary):
+        try: artifacts._run_bounded([sys.executable, '-c', code], 3, 1)
+        except PermissionError as error: assert has_original_failure(error)
+        else: raise AssertionError('leader exit alone was accepted as complete group cleanup')
+    assert_reaped_and_closed(owned[0])
+    assert time.monotonic() - started < 7, 'cleanup exceeded its existing 5s allowance'
+finally:
+    # The holder is a known private 30s fixture, not an arbitrary/recycled ID.
+    # Clean it even on RED, before reaping the direct child fallback.
+    if Path('holder').exists():
+        holder = int(Path('holder').read_text())
+        assert os.getpgid(holder) == owned[0].pid
+        real_killpg(owned[0].pid, signal.SIGKILL)
+        for attempt in range(100):
+            state = real_popen(['ps','-o','stat=','-p',str(holder)], stdout=subprocess.PIPE).communicate(timeout=1)[0].strip()
+            if not state or state.startswith(b'Z'): break
+            time.sleep(.01)
+        else: raise AssertionError('owned denied-group holder was not stopped')
+    fixture_cleanup()
+"#
+        ));
+    }
 }
