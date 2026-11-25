@@ -8,12 +8,13 @@ needed to measure the counter deltas.
 ## Current status
 
 The CLI, native collectors, optional public lookup workers, and report are
-implemented. Task9 preparation was accepted after independent review of
-[four-native candidate run 45630939249](https://github.com/rammses/ipnedir/actions/runs/45630939249)
-for source `81ac4cd8c3586acc7482b690822f4478d725991d`, including actual
-archives, aggregate checks, and generated formula proof. That historical proof
-does not verify the final-fix source: a new four-native run (including both Macs'
-prefix corroboration), fresh scoped final review, and final acceptance are pending.
+implemented. The corrected source `c7d613b4743394f04bec5b00e13de45e86452f23`
+passed [four-native candidate run 45640172044](https://github.com/rammses/ipnedir/actions/runs/45640172044),
+including both Macs' independent prefix corroboration, actual archives,
+aggregate checks, and generated formula proof. Linux passed 227 tests per
+architecture; macOS passed 231. These results apply to that source revision,
+not arbitrary future commits. Independent review and implementation acceptance
+are recorded in [build evidence](docs/superpowers/plans/2026-11-24-ipnedir-build-evidence.md).
 No release archives or Homebrew/tap packages have been published; there is no
 published install promised here.
 Archive/formula generation and a fail-closed release workflow are prepared;
@@ -155,9 +156,10 @@ certification of future commits, physical link capacity, every network topology,
 or live public-provider availability. No native sample counter above 2^32 was
 observed; driver speed was unavailable on ARM GNU/Linux and both macOS runners.
 Unsupported values were not manufactured.
-The later source `81ac4cd` four-native candidate/archive/aggregate proof was
-independently accepted for Task9 preparation, as recorded in the current status.
-**Final-fix source native verification and scoped final review remain pending.**
+Later candidate runs are separate evidence: source `81ac4cd` passed Task9
+preparation, and corrected source `c7d613b` passed the latest four-native
+archive/aggregate and Mac prefix gates described in the current status.
+Independent review acceptance is recorded separately in the build evidence.
 The workflow has read-only repository permissions, uses no secrets, and retains
 only explicit verification artifacts. Those binaries are CI evidence, not
 published release archives; the workflow does not publish releases or alter a

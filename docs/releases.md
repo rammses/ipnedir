@@ -5,11 +5,13 @@ or Homebrew installation. Task9 preparation was accepted after independent
 Builder/native-evidence review of [run 45630939249](https://github.com/rammses/ipnedir/actions/runs/45630939249),
 source `81ac4cd8c3586acc7482b690822f4478d725991d`: all four native candidates,
 actual archives, aggregate validation, and generated formula proof passed.
-That completed historical proof does not verify the final-fix source. A new
-four-native candidate run, including both Macs' actual prefix corroboration,
-and fresh scoped final review/final acceptance remain pending. Nothing here
-authorizes creating a tag, changing GitHub settings, publishing assets, or
-writing to a tap.
+The corrected source `c7d613b4743394f04bec5b00e13de45e86452f23` subsequently
+passed [run 45640172044](https://github.com/rammses/ipnedir/actions/runs/45640172044):
+all four native candidates and aggregation, including both Macs' independent
+prefix corroboration. Independent final review/implementation acceptance is
+recorded separately in [build evidence](superpowers/plans/2026-11-24-ipnedir-build-evidence.md).
+Native candidate success alone does not authorize creating a tag, changing
+GitHub settings, publishing assets, or writing to a tap.
 
 ## Local, offline preparation
 
@@ -194,10 +196,9 @@ any separately authorized recovery, never silently rerun to replace assets.
    existing alias/prototype. Formula runtime tests use only version/offline;
    downloading/installing assets itself needs authorized network access.
 
-**Explicitly pending:** new four-native candidate/aggregate evidence for the
-final-fix source (including actual Mac prefix checks), fresh scoped final review
-and final acceptance; owner protection/settings confirmation and approval;
-authorized real tag/publication/published-assets verification; tap diff/publication;
-Homebrew install/test/audit on macOS/Linux. Source `81ac4cd` preparation proof
-above is complete, not a substitute for these gates. No absent tool, unpublished
-asset or pending owner action is recorded as a passing check.
+**Explicitly pending owner operations:** protection/settings confirmation and
+approval; authorized real tag/publication/published-assets verification; tap
+diff/publication; Homebrew install/test/audit on macOS/Linux. Corrected source
+`c7d613b` native candidate/aggregate and Mac prefix proof is complete, not a
+substitute for these owner gates or independent review acceptance. No absent
+tool, unpublished asset or pending owner action is recorded as a passing check.
