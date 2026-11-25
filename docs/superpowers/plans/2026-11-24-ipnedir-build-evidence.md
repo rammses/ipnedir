@@ -11,13 +11,13 @@
 - Builder exclusively owns integration/index/commits. Workers do not subdelegate or change Git state. Existing shell alias/prototype, root main checkout, remote repositories/tap/credentials and VXLAN/LACP note remain outside implementation scope.
 - No remote creation/push/tag/publication, local installation or alias modification authorized.
 
-## Required gates still pending
+## Current gate status
 
-- Task1 complete after fresh spec/quality approval; one documented nonblocking diagnostic deferred to Task6/final review.
-- Tasks1–7 complete for their approved local gates; Task7 has one nonblocking test-capture finding deferred to final review. Actual Darwin/native evidence remains Task8.
+- Task1 complete after fresh spec/quality approval; its nonblocking unused-dependency diagnostic was resolved by genuine HTTP use in Task6.
+- Tasks1–7 complete; Task7's deferred test-capture finding was resolved in the single final fix wave and verified by the scoped final reviewer. Actual four-native acceptance is recorded under Tasks8/9 and final evidence below.
 - Task8 complete after actual four-native verification and fresh native-gap acceptance review below. Earlier blocked/failed attempts are historical, not waived.
 - Task9 preparation accepted after independent Builder/native-gap review of actual four-native candidate/archive/aggregate/formula proof in run45630939249, source81ac4cd (historical details below). Corrected sourcec7d613b also passed new four-native run45640172044, including both Macs' independent prefix corroboration; separate publication/Homebrew owner gates remain unauthorized/unrun.
-- Whole-change review identified the bounded final fixes; the one scoped final re-review and implementation acceptance remain pending. New-source native evidence is complete, not inferred from old runs.
+- Whole-change review and the one scoped final re-review are complete: all five final findings addressed, no new findings. Builder accepts the approved implementation/release preparation for corrected sourcec7d613b with metadata-only descendants; conditional publication/Homebrew operations are not accepted or authorized by this record.
 
 ## Task1 — candidate implementation and independent verification
 
@@ -250,3 +250,10 @@
 - Both actual Mac tests independently observed compact `lo0` IPv4 mask `[5,2,0,0,255]` and corroborated collector `127.0.0.1/8` plus `::1/128`; native offline reports now retain `en0` IPv4 /24 as well. This closes the semantic gap that earlier permissive tests missed. Actual large-output/stalled-child/retained-EOF capture and speed/help regressions passed on all architectures.
 - Aggregate log confirms four run/source/server-digest validations, successful four-archive `prepare-release`, Ruby SyntaxOK, verified-candidates artifact15035282681 and formula15035691086. Builder downloaded10artifactsets and independently reconciled actual binary/input/archive/record/source/hash/formula/ABI/native-gate evidence using ignored checker with explicit source/run/directory arguments (exit0). Full report/hashes: ignored final-native-verification-report.md. No foreign binary executed or actual release published.
 - Metadata-only current-status updates following c7d613b record these actual results; archived README bytes remain those from c7d613b, not later documentation. Source, tests, workflows, dependencies and binaries unchanged by this evidence update. Exactly one fresh scoped final re-review remains required, with full final-fix findings and evidence; no second final implementation wave.
+
+## Final independent review and implementation acceptance
+
+- Broad final Reviewer `ses_dece80200ffe2LOt82ukdTtw7X`, range6323cde..618b831, identified the five recorded findings. Exactly one final fix Implementer `ses_decd891f7ffeXW87Fy0ubfe9Yo` corrected all of them in c7d613b; no second final fix wave occurred.
+- Fresh scoped final Reviewer `ses_decbfd691ffeWDlUL4s0ITobZb`, package618b831..2b53e34: **IPN-FINAL-01/02/03/04 and IPN-T7-R1-001 all ADDRESSED**, no new Critical/Important/Minor findings and no out-of-scope observations. Independently checked actual corrected-source server status, native prefix logs, archive/input/binary/checksum/formula reconciliation and aggregate log, as well as the entire scoped code/test/doc diff and RED/GREEN report. Tracked worktree stayed clean.
+- Builder accepts all approved implementation and preparation work with no open review finding. Runtime/native/candidate evidence applies to tested source `c7d613b4743394f04bec5b00e13de45e86452f23`; subsequent commits update only documentation/review status, not binaries or the tested source. This acceptance-status update records the observed verdict; it is not another implementation/fix wave.
+- Remaining owner gates: authorize/configure protected release environment and enablement; review/create the real tag/release and verify published assets; authorize tap formula update; run Homebrew install/test/audit on supported macOS/Linux against published assets. Merge/PR, local installation and alias migration also require the owner's separate decision. None was performed, inferred, or waived. Branch/worktree and ignored evidence are preserved; no destructive cleanup.
