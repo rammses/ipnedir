@@ -15,7 +15,7 @@
 
 - Task1 complete after fresh spec/quality approval; one documented nonblocking diagnostic deferred to Task6/final review.
 - Tasks1–7 complete for their approved local gates; Task7 has one nonblocking test-capture finding deferred to final review. Actual Darwin/native evidence remains Task8.
-- Task8 local preparation/checks recorded below; full actual four-native acceptance **BLOCKED**, not waived.
+- Task8 actual four-native results now independently verified below; formal native-gap review pending. Earlier blocked/failed attempts are historical, not waived.
 - Task9 archive/formula/release preparation and separately authorized publication/Homebrew evidence: not started.
 - Whole-change independent review/final acceptance: pending.
 
@@ -158,3 +158,20 @@
 - Scoped native Fix1 sent to original Task8 Implementer; only ethtool byte conversion and Darwin mask parser/tests changed. Added four real-decoder opaque-header default/nondefault regressions, observed0/4 RED then GREEN; corrected one old negative fixture that falsely classified a legitimate opaque header as malformed and strengthened ordinary destination/gateway family negatives.
 - Worker and Builder independently ran final fmt0/full workspace **189 tests passed**/Clippy -D warnings0 warning-free. No lint suppression, native Complete-test weakening, gate skip, dependency/runner/workflow change or external endpoint request. Full fix evidence `task-8-native-fix-1-report.md` and original task report append.
 - Fixed-revision ARM Clippy/both native Darwin route tests and all four complete native legs remain pending new CI after fresh scoped review. Task8 still in progress, Task9 and final whole-change review not started. Existing Task7 Minor IPN-T7-R1-001 retained for final triage.
+
+## Task8 — successful actual four-native verification
+
+- Fresh scoped Fix1 Reviewer `ses_dedfdaac6ffecApfpVytgutkZb`: both known native defects ADDRESSED, no new breakage; native acceptance explicitly left pending. Authorized fast-forward feature push then triggered run <https://github.com/rammses/ipnedir/actions/runs/45585161878> at exact corrected source `9852c1164c4c1537711b8f51aed7859aa1650644` (no duplicate dispatch).
+- Builder directly monitored and queried server result: matrix and all four native jobs SUCCESS. Original Task8 worker independently reconciled all four downloaded artifact sets and actual server/job provenance; full report `task-8-native-verification-report.md` distinguishes observed runtime data from source assumptions and future commits.
+
+| Native target | Actual runner/image | Observed baseline | Full tests | Required native checks |
+| --- | --- | --- | --- | --- |
+| x86_64-unknown-linux-gnu | ubuntu-22.04 / ubuntu22 20261116.365.1 | Ubuntu22.04, glibc2.35, x86_64 |189passed,0failed/ignored|fmt/Clippy/build/version/offline/ELF ABI/file+socket/ioctl traces PASS|
+| aarch64-unknown-linux-gnu | ubuntu-22.04-arm / ubuntu22-arm64 20261116.196.1 | Ubuntu22.04, glibc2.35, aarch64 |189passed,0failed/ignored|same, including actual unsigned-char Clippy gate PASS|
+| aarch64-apple-darwin | macos-15 / macos15 20261118.0550.1 | macOS15.8.2 arm64, SDK15.5, deployment15.0 |192passed,0failed/ignored|actual selected-SDK C probe, five Task4/5 native tests, fmt/Clippy/build/version/offline/Mach-O deployment PASS|
+| x86_64-apple-darwin | macos-15-intel / macos15 20260824.0482.1 | macOS15.7.9 x86_64, SDK15.5, deployment15.0 |192passed,0failed/ignored|same, including unchanged route Complete gate PASS|
+
+- All actual Rust compiler hosts match native targets, Rust1.100.0/Cargo1.100.0; both Macs selected Xcode16.4/MacOSX15.5.sdk. This does not claim executing macOS15.0 minor release or every topology/physical link.
+- Builder independently read all four baseline records, queried successful run/SHA/jobs, and ran ignored `task-8-builder-evidence-check.py` (exit0): exact revision/run/baseline/host, seven test-group summaries per target, all five native Darwin tests, selected-SDK/deployment, actual trace evidence, warning-free Clippy, version/offline outputs and every input/binary hash matched. No native suite rerun or foreign binary executed locally.
+- Linux actual traces showed namespace-local NETLINK_ROUTE/IFLA_STATS64/SIOCETHTOOL with zero sysfs interface-data requests, including optional unsupported driver-query results. Both Macs independently corroborated loopback IFMIB samples; no native counter above2^32 or physical link capacity was generated/claimed. Driver speed unavailable on LinuxARM/Macs remained unavailable.
+- Native evidence applies to source9852c116... only. Subsequent changes here are evidence/README metadata, not production/test/workflow code. All previous missing-access and first-attempt failures remain historical records. Fresh scoped native-gap/evidence review still required before Builder marks Task8 complete; Task9/final whole-change review/publication not started.

@@ -8,9 +8,10 @@ needed to measure the counter deltas.
 ## Current status
 
 The CLI, native collectors, optional public lookup workers, and report are
-implemented. Host verification is currently **x86-64 GNU/Linux only**. Actual
-macOS SDK/runtime and native ARM verification, release artifacts, and Homebrew
-publication remain separate gates; there is no published install promised here.
+implemented. Actual four-platform native CI evidence is recorded below;
+Builder's independent evidence review and final acceptance remain pending.
+No release archives or Homebrew/tap packages have been published; there is no
+published install promised here.
 
 ## Usage
 
@@ -102,7 +103,7 @@ continuity: a replacement with the same index/name and nondecreasing counters is
 indistinguishable from a continuing device. These are snapshot observations, not
 proof of continuity or a bandwidth-capacity measurement.
 
-## Compatibility and native evidence (verification pending)
+## Compatibility and native evidence
 
 Planned deployment baselines are **macOS 15** and **GNU/Linux with glibc 2.35**
 (Ubuntu 22.04 equivalent); older systems and musl are not promised. The intended
@@ -132,14 +133,26 @@ provenance. Optional driver speed and above-32-bit traffic not exposed by a
 runner are identified as uncorroborated, never manufactured. Native smoke tests
 require no Internet, Wi-Fi, physical Ethernet, or host network changes.
 
-These are prepared gates, **not** a verified four-platform runtime matrix.
-Current local evidence remains x86-64 GNU/Linux only, not proof of the pinned
-Ubuntu 22.04 baseline or any ARM/macOS leg. All four actual native results and
-selected-SDK/runtime evidence remain blocked pending owner-authorized native
-runner/repository access. Portable fixtures, YAML preparation, or cross builds
-do not close those gates. The workflow has read-only repository permissions,
-uses no secrets, and retains only explicit verification artifacts; it does not
-publish archives/releases or alter a tap. Any eventual
+On **2026-11-25**, [native CI run 45585161878](https://github.com/rammses/ipnedir/actions/runs/45585161878)
+passed all four native legs for source revision
+[`9852c1164c4c1537711b8f51aed7859aa1650644`](https://github.com/rammses/ipnedir/commit/9852c1164c4c1537711b8f51aed7859aa1650644).
+Both Ubuntu 22.04/glibc 2.35 legs passed **189 tests each**; the macOS legs
+passed **192 tests each**, including actual SDK/native IFMIB/media/route checks.
+The Macs ran macOS **15.8.2 (ARM64)** and **15.7.9 (Intel)** with SDK **15.5**
+and actual binary deployment target **15.0**. Formatting, warning-free Clippy,
+target release builds, binary version/offline smoke, ABI checks, and Linux
+file/socket tracing passed. Uploaded binaries matched their recorded hashes.
+
+This is evidence for that exact source revision in those CI environments, not
+certification of future commits, physical link capacity, every network topology,
+or live public-provider availability. No native sample counter above 2^32 was
+observed; driver speed was unavailable on ARM GNU/Linux and both macOS runners.
+Unsupported values were not manufactured.
+**Builder's independent evidence review and final acceptance remain pending.**
+The workflow has read-only repository permissions, uses no secrets, and retains
+only explicit verification artifacts. Those binaries are CI evidence, not
+published release archives; the workflow does not publish releases or alter a
+tap. Any eventual
 `brew install rammses/tap/ipnedir` requires separately authorized release/tap
 publication; it is not a current installation instruction.
 
