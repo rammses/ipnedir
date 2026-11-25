@@ -12,6 +12,9 @@ implemented. Actual four-platform native CI evidence is recorded below;
 Builder's independent evidence review and final acceptance remain pending.
 No release archives or Homebrew/tap packages have been published; there is no
 published install promised here.
+Archive/formula generation and a fail-closed release workflow are prepared;
+new four-native **candidate** verification and release-owner operations remain
+pending. See [release preparation and the owner runbook](docs/releases.md).
 
 ## Usage
 
@@ -155,6 +158,23 @@ published release archives; the workflow does not publish releases or alter a
 tap. Any eventual
 `brew install rammses/tap/ipnedir` requires separately authorized release/tap
 publication; it is not a current installation instruction.
+
+## Candidate archives and release controls
+
+The existing read-only native CI accepts `package=true` on a manual dispatch or
+reusable call (default false). It needs no real tag to prepare Actions candidate
+archives: every native leg packages/smokes its own binary, and aggregation binds
+server artifact IDs/run/source/ZIP digests before rehashing the complete set and
+generating the formula. These candidates are not published GitHub assets.
+
+`xtask verify-tag`, `package`, `prepare-release`, and `check-publish` are developer
+commands, not new app flags. See [docs/releases.md](docs/releases.md) for their
+contracts, bounds, fresh output-directory requirements and current pending gates.
+Tag-triggered release preparation never publishes automatically. Publication
+requires a manual selected-tag request, explicit repository enablement, all
+four verified builds, exact clean tag/source and actual server-side required
+reviewer protection/approval. Merely naming an environment `release` cannot pass.
+No tag/release/tap/credential/installation action is authorized by preparation.
 
 ## Manual migration from a prototype or alias
 

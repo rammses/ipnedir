@@ -1,15 +1,16 @@
 use std::{ffi::OsString, io::Write};
 
 fn output(args: &[OsString]) -> Result<String, (u8, String)> {
-    if args != [OsString::from("matrix")] {
-        return Err((
-            2,
-            format!("ipnedir {} xtask: usage: xtask matrix", ipnedir::VERSION),
-        ));
-    }
-    let targets = xtask::targets::parse(include_str!("../../release/targets.tsv"))
-        .map_err(|error| (1, format!("ipnedir {} xtask: {error}", ipnedir::VERSION)))?;
-    Ok(xtask::matrix(&targets))
+    let context = xtask::Context {
+        ci_sha: (std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true"))
+            .then(|| std::env::var("GITHUB_SHA").unwrap_or_default()),
+        reference: std::env::var("GITHUB_REF").unwrap_or_default(),
+        repository: std::env::var("GITHUB_REPOSITORY").unwrap_or_default(),
+    };
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    xtask::command(root, args, &context)
 }
 
 fn main() -> std::process::ExitCode {

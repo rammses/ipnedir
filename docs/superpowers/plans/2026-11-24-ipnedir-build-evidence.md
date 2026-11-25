@@ -15,8 +15,8 @@
 
 - Task1 complete after fresh spec/quality approval; one documented nonblocking diagnostic deferred to Task6/final review.
 - Tasks1–7 complete for their approved local gates; Task7 has one nonblocking test-capture finding deferred to final review. Actual Darwin/native evidence remains Task8.
-- Task8 actual four-native results now independently verified below; formal native-gap review pending. Earlier blocked/failed attempts are historical, not waived.
-- Task9 archive/formula/release preparation and separately authorized publication/Homebrew evidence: not started.
+- Task8 complete after actual four-native verification and fresh native-gap acceptance review below. Earlier blocked/failed attempts are historical, not waived.
+- Task9 local preparation candidate recorded below; actual new four-native candidate/aggregate proof pending. Separate publication/Homebrew owner gates remain unauthorized/unrun.
 - Whole-change independent review/final acceptance: pending.
 
 ## Task1 — candidate implementation and independent verification
@@ -175,3 +175,20 @@
 - Builder independently read all four baseline records, queried successful run/SHA/jobs, and ran ignored `task-8-builder-evidence-check.py` (exit0): exact revision/run/baseline/host, seven test-group summaries per target, all five native Darwin tests, selected-SDK/deployment, actual trace evidence, warning-free Clippy, version/offline outputs and every input/binary hash matched. No native suite rerun or foreign binary executed locally.
 - Linux actual traces showed namespace-local NETLINK_ROUTE/IFLA_STATS64/SIOCETHTOOL with zero sysfs interface-data requests, including optional unsupported driver-query results. Both Macs independently corroborated loopback IFMIB samples; no native counter above2^32 or physical link capacity was generated/claimed. Driver speed unavailable on LinuxARM/Macs remained unavailable.
 - Native evidence applies to source9852c116... only. Subsequent changes here are evidence/README metadata, not production/test/workflow code. All previous missing-access and first-attempt failures remain historical records. Fresh scoped native-gap/evidence review still required before Builder marks Task8 complete; Task9/final whole-change review/publication not started.
+
+### Task8 formal acceptance
+
+- Evidence/README checkpoint `f5494bd2e7939fd99ca475c40561fed38ab2bea3`, previous reviewed/tested source `9852c1164c4c1537711b8f51aed7859aa1650644`; required metadata package `review-9852c11..f5494bd.diff`.
+- Fresh capable native-gap Reviewer `ses_deddfdccbffejQEb3HwVhO1X1F`: actual missing four-native evidence ADDRESSED, no new breakage. Independently checked server statuses, all four artifact baselines/native tests/SDK/traces/hash evidence and unchanged code. Task8 acceptance may close for tested source985 with metadata-only descendantf549.
+- Task8 complete through full preparation review, one scoped native bug-fix wave/re-review, actual four-native CI and final gap re-review. No runtime/SDK/architecture requirement waived. Task9 may now begin; whole-change/final acceptance and actual release/tag/tap/publication/install/alias actions remain separate. Task7 capture minor remains for final triage.
+
+## Task9 — local preparation candidate, native candidate proof pending
+
+- Fresh capable Implementer `ses_dedd275d6ffeiteP7M8hGtyhGZ`, BASE `f5494bd2e7939fd99ca475c40561fed38ab2bea3`; reports BLOCKED at required new clean-commit four-native `package=true`/aggregate proof, not local code/test failure. No actual tag/release/tap/install/alias operation.
+- Added std-only release tooling (native executable/version/offline/header checks, bounded tar/gzip/SHA/temp/record handling, complete archive-set verification, actual-hash formula and actual clean-tag publication gate), developer command integration, optional read-only CI packaging/aggregation, gated release workflow and owner runbook. App/native/public/models/dependencies/lock/target manifest unchanged.
+- Worker behavioral RED/GREEN covers tag/policy/header/hash/record/USTAR/source/gate commands and actual embedded artifact/environment validators against offline fixtures. Final local release filter23tests and complete workspace212tests passed; fmt/Clippy warning-free. These are not actual GitHub publication/settings/Homebrew execution.
+- Builder independently fmt0, complete workspace/all-target **212 passed**,0 failed/ignored, Clippy -D warnings0warning-free and whitespace check; inspected production archive/tooling, dispatcher/formula and CI/release security boundaries/report against the approved scope.
+- Worker actual local Linux named binary build/version/offline/native archive/reopened extracted-binary smoke succeeded. Native local archive `b980fe12de7ad6cfaa1d5389ec272b0596db2e8fa793ee700172b013603a590b` records `local-uncommitted`, deliberately publication-ineligible. Formula fixture output passed actual Ruby syntax only, not a real four-native formula or installed Homebrew package.
+- Full worker evidence/hashes and exact local commands are in ignored `task-9-report.md`; new native macOS/ARM tar/SHA/archive/source/aggregate/artifact-API/reusable-workflow behavior still needs actual clean-commit CI. Existing Task8 native source985 proof cannot substitute for these new release-tooling gates.
+- Source/preparation review required before authorized feature push and read-only candidate CI. Current code uses duplicated embedded artifact validators in two workflows; reviewer must judge their actual DRY/maintenance/security consequence rather than accept the report's rationale. Actual environment protection is checked fail-closed before the dormant publication command; no settings were configured or publication path executed.
+- Separately conditional owner operations (real protection/enablement, tag/release, tap update, published-asset/Homebrew install/test/audit) remain pending and outside current permission. Do not report Task9/final acceptance complete from local prep alone. Task7 capture minor remains for final triage.
